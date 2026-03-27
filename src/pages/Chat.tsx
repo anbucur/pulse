@@ -43,6 +43,9 @@ export default function Chat() {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [showSavedPhrases, setShowSavedPhrases] = useState(false);
   const [savedPhrases, setSavedPhrases] = useState<{id: string, text: string}[]>([]);
+  const [disappearAfter, setDisappearAfter] = useState<number | null>(null);
+  const [showDisappearMenu, setShowDisappearMenu] = useState(false);
+  const [nsfwRevealed, setNsfwRevealed] = useState<Set<string>>(new Set());
   const [newPhrase, setNewPhrase] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const webcamRef = useRef<Webcam>(null);
@@ -82,16 +85,13 @@ export default function Chat() {
     };
     fetchProfiles();
 
-    // Listen for chat metadata (typing status)
+    // Listen for chat metadata (typing status + disappearAfter)
     const unsubscribeChat = onSnapshot(doc(db, 'chats', chatId), (doc) => {
       if (doc.exists()) {
         const data = doc.data();
         const otherUid = data.participants.find((id: string) => id !== user.uid);
-        if (otherUid && data.typing && data.typing[otherUid]) {
-          setOtherUserTyping(true);
-        } else {
-          setOtherUserTyping(false);
-        }
+        setOtherUserTyping(!!(otherUid && data.typing && data.typing[otherUid]));
+        setDisappearAfter(data.disappearAfter ?? null);
       }
     });
 
@@ -479,16 +479,46 @@ export default function Chat() {
           </div>
         </div>
         
-        {messages.length === 0 && (
-          <button 
-            onClick={generateIcebreaker}
-            disabled={isGeneratingIcebreaker || !otherUser || !myProfile}
-            className="flex items-center text-xs font-medium bg-rose-500/10 text-rose-500 px-3 py-1.5 rounded-full border border-rose-500/20 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
-          >
-            {isGeneratingIcebreaker ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
-            Icebreaker
-          </button>
-        )}
+        <div className="flex items-center space-x-2">
+          {messages.length === 0 && (
+            <button
+              onClick={generateIcebreaker}
+              disabled={isGeneratingIcebreaker || !otherUser || !myProfile}
+              className="flex items-center text-xs font-medium bg-rose-500/10 text-rose-500 px-3 py-1.5 rounded-full border border-rose-500/20 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+            >
+              {isGeneratingIcebreaker ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
+              Icebreaker
+            </button>
+          )}
+          <div className="relative">
+            <button
+              onClick={() => setShowDisappearMenu(d => !d)}
+              className={`flex items-center text-xs px-2 py-1.5 rounded-full border transition-colors ${disappearAfter ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-zinc-800 text-zinc-400 border-zinc-700'}`}
+              title="Disappearing messages"
+            >
+              <EyeOff className="w-3.5 h-3.5 mr-1" />
+              {disappearAfter ? (disappearAfter === 3600000 ? '1h' : disappearAfter === 86400000 ? '24h' : '7d') : 'Off'}
+            </button>
+            {showDisappearMenu && (
+              <div className="absolute right-0 top-9 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl z-50 min-w-[120px]">
+                {[['Off', null], ['1 Hour', 3600000], ['24 Hours', 86400000], ['7 Days', 604800000]].map(([label, val]) => (
+                  <button
+                    key={String(label)}
+                    onClick={async () => {
+                      if (chatId) {
+                        await updateDoc(doc(db, 'chats', chatId), { disappearAfter: val });
+                      }
+                      setShowDisappearMenu(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-zinc-700 first:rounded-t-xl last:rounded-b-xl transition-colors ${disappearAfter === val ? 'text-rose-500' : 'text-zinc-300'}`}
+                  >
+                    {String(label)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Messages */}
@@ -506,68 +536,91 @@ export default function Chat() {
             <p>You matched with {otherUser?.displayName}. Say hi!</p>
           </div>
         )}
-        {messages.map((msg) => {
-          const isMe = msg.senderId === user?.uid;
-          return (
-            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group`}>
-              {isMe && (
-                <button 
-                  onClick={() => handleUnsendMessage(msg.id)}
-                  className="opacity-0 group-hover:opacity-100 p-2 text-zinc-500 hover:text-rose-500 transition-opacity mr-2 self-center"
-                  title="Unsend message"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
-              <div 
-                className={`max-w-[75%] rounded-2xl px-4 py-2 ${
-                  isMe 
-                    ? 'bg-rose-600 text-white rounded-br-sm' 
-                    : 'bg-zinc-800 text-zinc-100 rounded-bl-sm'
-                }`}
-              >
-                {msg.isViewOnce ? (
-                  <div className="flex items-center space-x-2">
-                    {isMe ? (
-                      <div className="flex items-center text-rose-200">
-                        <Eye className="w-4 h-4 mr-2" />
-                        <span className="text-sm italic">View-Once Photo Sent</span>
-                      </div>
-                    ) : msg.viewedAt ? (
-                      <div className="flex items-center text-zinc-500">
-                        <EyeOff className="w-4 h-4 mr-2" />
-                        <span className="text-sm italic">Photo Viewed</span>
-                      </div>
-                    ) : (
-                      <button 
-                        onClick={() => handleViewMedia(msg)}
-                        className="flex items-center bg-rose-500 text-white px-3 py-1.5 rounded-lg hover:bg-rose-600 transition-colors"
-                      >
-                        <Eye className="w-4 h-4 mr-2" />
-                        <span className="text-sm font-medium">Tap to View</span>
-                      </button>
-                    )}
-                  </div>
-                ) : msg.mediaUrl ? (
-                  <img src={msg.mediaUrl} alt="Media" className="rounded-lg max-w-full h-auto mb-2" />
-                ) : msg.audioUrl ? (
-                  <audio src={msg.audioUrl} controls className="w-48 h-10" />
-                ) : null}
-                
-                {msg.text && <p className="text-sm">{msg.text}</p>}
-                
-                <p className={`text-[10px] mt-1 text-right ${isMe ? 'text-rose-200' : 'text-zinc-500'}`}>
-                  {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
+        {messages
+          .filter(msg => {
+            if (!disappearAfter) return true;
+            return msg.timestamp + disappearAfter > Date.now();
+          })
+          .map((msg, idx, arr) => {
+            const isMe = msg.senderId === user?.uid;
+            const isLastFromMe = isMe && arr.slice(idx + 1).every(m => m.senderId !== user?.uid);
+            const isNSFWRevealed = nsfwRevealed.has(msg.id);
+            return (
+              <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} group w-full`}>
                   {isMe && (
-                    <span className="ml-1">
-                      {msg.isRead ? '• Read' : '• Delivered'}
-                    </span>
+                    <button
+                      onClick={() => handleUnsendMessage(msg.id)}
+                      className="opacity-0 group-hover:opacity-100 p-2 text-zinc-500 hover:text-rose-500 transition-opacity mr-2 self-center"
+                      title="Unsend message"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   )}
-                </p>
+                  <div
+                    className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                      isMe
+                        ? 'bg-rose-600 text-white rounded-br-sm'
+                        : 'bg-zinc-800 text-zinc-100 rounded-bl-sm'
+                    }`}
+                  >
+                    {msg.isViewOnce ? (
+                      <div className="flex items-center space-x-2">
+                        {isMe ? (
+                          <div className="flex items-center text-rose-200">
+                            <Eye className="w-4 h-4 mr-2" />
+                            <span className="text-sm italic">View-Once Photo Sent</span>
+                          </div>
+                        ) : msg.viewedAt ? (
+                          <div className="flex items-center text-zinc-500">
+                            <EyeOff className="w-4 h-4 mr-2" />
+                            <span className="text-sm italic">Photo Viewed</span>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleViewMedia(msg)}
+                            className="flex items-center bg-rose-500 text-white px-3 py-1.5 rounded-lg hover:bg-rose-600 transition-colors"
+                          >
+                            <Eye className="w-4 h-4 mr-2" />
+                            <span className="text-sm font-medium">Tap to View</span>
+                          </button>
+                        )}
+                      </div>
+                    ) : msg.mediaUrl ? (
+                      <div className="relative">
+                        <img
+                          src={msg.mediaUrl}
+                          alt="Media"
+                          className={`rounded-lg max-w-full h-auto mb-2 transition-all ${!isNSFWRevealed ? 'blur-xl cursor-pointer' : ''}`}
+                          onClick={() => !isNSFWRevealed && setNsfwRevealed(prev => new Set([...prev, msg.id]))}
+                        />
+                        {!isNSFWRevealed && (
+                          <div className="absolute inset-0 flex items-center justify-center" onClick={() => setNsfwRevealed(prev => new Set([...prev, msg.id]))}>
+                            <span className="text-xs bg-black/60 text-white px-2 py-1 rounded-full cursor-pointer">Tap to reveal</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : msg.audioUrl ? (
+                      <audio src={msg.audioUrl} controls className="w-48 h-10" />
+                    ) : null}
+
+                    {msg.text && <p className="text-sm">{msg.text}</p>}
+
+                    <p className={`text-[10px] mt-1 text-right ${isMe ? 'text-rose-200' : 'text-zinc-500'}`}>
+                      {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
+                      {isMe && <span className="ml-1">{msg.isRead ? '✓✓' : '✓'}</span>}
+                    </p>
+                  </div>
+                </div>
+                {/* Seen label for last message sent by me that was read */}
+                {isLastFromMe && msg.isRead && (
+                  <p className="text-[10px] text-zinc-500 mr-1 mt-0.5">
+                    Seen {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
+                  </p>
+                )}
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
         
         {otherUserTyping && (
           <div className="flex justify-start">

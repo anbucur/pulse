@@ -15,6 +15,8 @@ import Grid from './pages/Grid';
 import ChatList from './pages/ChatList';
 import Chat from './pages/Chat';
 import Profile from './pages/Profile';
+import Events from './pages/Events';
+import Tribes from './pages/Tribes';
 
 export default function App() {
   return (
@@ -25,11 +27,13 @@ export default function App() {
           <Route path="/signup" element={<SignUp />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/onboarding" element={<Onboarding />} />
-          
+
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>
               <Route path="/" element={<Grid />} />
               <Route path="/chats" element={<ChatList />} />
+              <Route path="/events" element={<Events />} />
+              <Route path="/tribes" element={<Tribes />} />
               <Route path="/profile" element={<Profile />} />
             </Route>
             <Route path="/chat/:chatId" element={<Chat />} />

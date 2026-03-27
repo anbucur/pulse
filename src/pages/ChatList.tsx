@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs, doc, setDoc, deleteDoc, updateDoc, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { Pin, PinOff } from 'lucide-react';
+import { Pin, PinOff, Check, X, MessageCircle } from 'lucide-react';
 
 interface Chat {
   id: string;
@@ -19,10 +19,20 @@ interface Chat {
   };
 }
 
+interface ChatRequest {
+  id: string;
+  from: string;
+  to: string;
+  status: string;
+  createdAt: number;
+  fromProfile?: any;
+}
+
 export default function ChatList() {
-  const { user } = useAuth();
+  const { user, blockedUsers } = useAuth();
   const [chats, setChats] = useState<Chat[]>([]);
   const [pinnedChats, setPinnedChats] = useState<string[]>([]);
+  const [chatRequests, setChatRequests] = useState<ChatRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -41,7 +51,10 @@ export default function ChatList() {
       const chatPromises = snapshot.docs.map(async (chatDoc) => {
         const data = chatDoc.data();
         const otherUid = data.participants.find((id: string) => id !== user.uid);
-        
+
+        // Filter blocked users
+        if (otherUid && blockedUsers.includes(otherUid)) return null;
+
         let otherUser = null;
         if (otherUid) {
           const profileDoc = await getDocs(query(collection(db, 'public_profiles'), where('uid', '==', otherUid)));
@@ -50,29 +63,41 @@ export default function ChatList() {
           }
         }
 
-        return {
-          id: chatDoc.id,
-          ...data,
-          otherUser
-        } as Chat;
+        return { id: chatDoc.id, ...data, otherUser } as Chat;
       });
 
-      const resolvedChats = await Promise.all(chatPromises);
+      const resolvedChats = (await Promise.all(chatPromises)).filter(Boolean) as Chat[];
       setChats(resolvedChats);
       setLoading(false);
+    });
+
+    // Fetch incoming chat requests (pending only)
+    const requestsQ = query(
+      collection(db, 'chat_requests'),
+      where('to', '==', user.uid),
+      where('status', '==', 'pending')
+    );
+    const requestsUnsub = onSnapshot(requestsQ, async (snap) => {
+      const requests = await Promise.all(snap.docs.map(async (d) => {
+        const data = d.data();
+        const profileDoc = await getDocs(query(collection(db, 'public_profiles'), where('uid', '==', data.from)));
+        const fromProfile = profileDoc.empty ? null : profileDoc.docs[0].data();
+        return { id: d.id, ...data, fromProfile } as ChatRequest;
+      }));
+      setChatRequests(requests.filter(r => r.fromProfile));
     });
 
     return () => {
       unsubscribe();
       pinnedUnsub();
+      requestsUnsub();
     };
-  }, [user]);
+  }, [user, blockedUsers]);
 
   const togglePin = async (e: React.MouseEvent, chatId: string) => {
     e.preventDefault();
     e.stopPropagation();
     if (!user) return;
-
     try {
       if (pinnedChats.includes(chatId)) {
         await deleteDoc(doc(db, `pinned_chats/${user.uid}/chats`, chatId));
@@ -81,6 +106,30 @@ export default function ChatList() {
       }
     } catch (error) {
       console.error("Error toggling pin:", error);
+    }
+  };
+
+  const acceptRequest = async (request: ChatRequest) => {
+    if (!user) return;
+    try {
+      // Create the actual chat
+      const newChatRef = await addDoc(collection(db, 'chats'), {
+        participants: [request.from, user.uid],
+        updatedAt: Date.now(),
+        lastMessage: ''
+      });
+      // Update request status
+      await updateDoc(doc(db, 'chat_requests', request.id), { status: 'accepted', chatId: newChatRef.id });
+    } catch (e) {
+      console.error('Error accepting request', e);
+    }
+  };
+
+  const declineRequest = async (requestId: string) => {
+    try {
+      await updateDoc(doc(db, 'chat_requests', requestId), { status: 'declined' });
+    } catch (e) {
+      console.error('Error declining request', e);
     }
   };
 
@@ -98,6 +147,46 @@ export default function ChatList() {
         <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
       </div>
 
+      {/* Chat Requests */}
+      {chatRequests.length > 0 && (
+        <div className="p-4 border-b border-zinc-800">
+          <h2 className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-3 flex items-center">
+            <MessageCircle className="w-4 h-4 mr-2" /> Chat Requests ({chatRequests.length})
+          </h2>
+          <div className="space-y-3">
+            {chatRequests.map(req => (
+              <div key={req.id} className="flex items-center p-3 bg-zinc-900 rounded-xl border border-zinc-800">
+                <img
+                  src={req.fromProfile?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${req.from}`}
+                  alt={req.fromProfile?.displayName}
+                  className="w-10 h-10 rounded-full object-cover mr-3"
+                />
+                <div className="flex-1">
+                  <p className="font-medium text-white text-sm">{req.fromProfile?.displayName}</p>
+                  <p className="text-xs text-zinc-500">Wants to chat</p>
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => acceptRequest(req)}
+                    className="p-2 bg-rose-600 hover:bg-rose-700 text-white rounded-full transition-colors"
+                    title="Accept"
+                  >
+                    <Check className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => declineRequest(req.id)}
+                    className="p-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-full transition-colors"
+                    title="Decline"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="divide-y divide-zinc-800">
         {loading ? (
           <div className="p-8 text-center text-zinc-500">Loading chats...</div>
@@ -105,15 +194,15 @@ export default function ChatList() {
           <div className="p-8 text-center text-zinc-500">No messages yet. Start swiping!</div>
         ) : (
           sortedChats.map((chat) => (
-            <Link 
-              key={chat.id} 
+            <Link
+              key={chat.id}
               to={`/chat/${chat.id}`}
               className={`flex items-center p-4 hover:bg-zinc-900 transition-colors ${pinnedChats.includes(chat.id) ? 'bg-zinc-900/50' : ''}`}
             >
               <div className="relative">
-                <img 
-                  src={chat.otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${chat.id}`} 
-                  alt={chat.otherUser?.displayName || 'User'} 
+                <img
+                  src={chat.otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${chat.id}`}
+                  alt={chat.otherUser?.displayName || 'User'}
                   className="w-14 h-14 rounded-full object-cover border border-zinc-800"
                   referrerPolicy="no-referrer"
                 />
@@ -139,7 +228,7 @@ export default function ChatList() {
                         {chat.unreadCount?.[user?.uid || '']}
                       </span>
                     )}
-                    <button 
+                    <button
                       onClick={(e) => togglePin(e, chat.id)}
                       className="p-1.5 text-zinc-500 hover:text-rose-500 hover:bg-zinc-800 rounded-full transition-colors"
                       title={pinnedChats.includes(chat.id) ? "Unpin chat" : "Pin chat"}
