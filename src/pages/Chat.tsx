@@ -4,10 +4,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, increment } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { ArrowLeft, Send, Image as ImageIcon, Sparkles, Loader2, Bot, Camera, X, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Send, Image as ImageIcon, Sparkles, Loader2, Bot, Camera, X, Eye, EyeOff, Mic, Square, Trash2, Bookmark } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { GoogleGenAI } from '@google/genai';
 import Webcam from 'react-webcam';
+import { uploadMedia } from '../lib/uploadMedia';
+import { deleteDoc } from 'firebase/firestore';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -20,6 +22,7 @@ interface Message {
   mediaUrl?: string;
   isViewOnce?: boolean;
   viewedAt?: number;
+  audioUrl?: string;
 }
 
 export default function Chat() {
@@ -34,8 +37,29 @@ export default function Chat() {
   const [isGeneratingReply, setIsGeneratingReply] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [viewingMedia, setViewingMedia] = useState<Message | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
+  const [otherUserTyping, setOtherUserTyping] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [showSavedPhrases, setShowSavedPhrases] = useState(false);
+  const [savedPhrases, setSavedPhrases] = useState<{id: string, text: string}[]>([]);
+  const [newPhrase, setNewPhrase] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const webcamRef = useRef<Webcam>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribePhrases = onSnapshot(collection(db, `saved_phrases/${user.uid}/phrases`), (snapshot) => {
+      const phrases = snapshot.docs.map(doc => ({ id: doc.id, text: doc.data().text }));
+      setSavedPhrases(phrases);
+    });
+    return () => unsubscribePhrases();
+  }, [user]);
 
   useEffect(() => {
     if (!user || !chatId) return;
@@ -57,6 +81,19 @@ export default function Chat() {
       }
     };
     fetchProfiles();
+
+    // Listen for chat metadata (typing status)
+    const unsubscribeChat = onSnapshot(doc(db, 'chats', chatId), (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        const otherUid = data.participants.find((id: string) => id !== user.uid);
+        if (otherUid && data.typing && data.typing[otherUid]) {
+          setOtherUserTyping(true);
+        } else {
+          setOtherUserTyping(false);
+        }
+      }
+    });
 
     // Listen for messages
     const q = query(
@@ -103,8 +140,145 @@ export default function Chat() {
       }
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      unsubscribeChat();
+    };
   }, [chatId, user]);
+
+  const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewMessage(e.target.value);
+    
+    if (!isTyping && user && chatId) {
+      setIsTyping(true);
+      updateDoc(doc(db, 'chats', chatId), {
+        [`typing.${user.uid}`]: true
+      }).catch(console.error);
+    }
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    
+    typingTimeoutRef.current = setTimeout(() => {
+      setIsTyping(false);
+      if (user && chatId) {
+        updateDoc(doc(db, 'chats', chatId), {
+          [`typing.${user.uid}`]: false
+        }).catch(console.error);
+      }
+    }, 2000);
+  };
+
+  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!user || !chatId || !e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    
+    try {
+      const url = await uploadMedia(file, `chats/${chatId}/${Date.now()}_${file.name}`);
+      handleSendMessage(undefined, url, false);
+    } catch (error) {
+      console.error('Error uploading media:', error);
+      alert('Failed to upload media.');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        stream.getTracks().forEach(track => track.stop());
+        
+        if (user && chatId) {
+          try {
+            const url = await uploadMedia(audioBlob, `chats/${chatId}/${Date.now()}_audio.webm`);
+            
+            // Send audio message
+            await addDoc(collection(db, `chats/${chatId}/messages`), {
+              senderId: user.uid,
+              text: '',
+              audioUrl: url,
+              timestamp: Date.now(),
+              isRead: false
+            });
+
+            const otherUid = otherUser?.uid || (await getDoc(doc(db, 'chats', chatId))).data()?.participants.find((id: string) => id !== user.uid);
+            await updateDoc(doc(db, 'chats', chatId), {
+              lastMessage: '🎤 Voice Message',
+              updatedAt: Date.now(),
+              ...(otherUid ? { [`unreadCount.${otherUid}`]: increment(1) } : {})
+            });
+          } catch (error) {
+            console.error("Error uploading audio:", error);
+            alert("Failed to send voice message.");
+          }
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+      
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+
+    } catch (error) {
+      console.error("Error accessing microphone:", error);
+      alert("Microphone access denied.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
+    }
+  };
+
+  const handleUnsendMessage = async (msgId: string) => {
+    if (!user || !chatId) return;
+    try {
+      await deleteDoc(doc(db, `chats/${chatId}/messages`, msgId));
+    } catch (error) {
+      console.error("Error unsending message:", error);
+      alert("Failed to unsend message.");
+    }
+  };
+
+  const handleAddPhrase = async () => {
+    if (!user || !newPhrase.trim()) return;
+    try {
+      await addDoc(collection(db, `saved_phrases/${user.uid}/phrases`), {
+        text: newPhrase.trim(),
+        createdAt: Date.now()
+      });
+      setNewPhrase('');
+    } catch (error) {
+      console.error("Error adding phrase:", error);
+    }
+  };
+
+  const handleDeletePhrase = async (phraseId: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, `saved_phrases/${user.uid}/phrases`, phraseId));
+    } catch (error) {
+      console.error("Error deleting phrase:", error);
+    }
+  };
 
   const handleSendMessage = async (e?: React.FormEvent, mediaUrl?: string, isViewOnce?: boolean) => {
     if (e) e.preventDefault();
@@ -335,7 +509,16 @@ export default function Chat() {
         {messages.map((msg) => {
           const isMe = msg.senderId === user?.uid;
           return (
-            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group`}>
+              {isMe && (
+                <button 
+                  onClick={() => handleUnsendMessage(msg.id)}
+                  className="opacity-0 group-hover:opacity-100 p-2 text-zinc-500 hover:text-rose-500 transition-opacity mr-2 self-center"
+                  title="Unsend message"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
               <div 
                 className={`max-w-[75%] rounded-2xl px-4 py-2 ${
                   isMe 
@@ -367,17 +550,35 @@ export default function Chat() {
                   </div>
                 ) : msg.mediaUrl ? (
                   <img src={msg.mediaUrl} alt="Media" className="rounded-lg max-w-full h-auto mb-2" />
+                ) : msg.audioUrl ? (
+                  <audio src={msg.audioUrl} controls className="w-48 h-10" />
                 ) : null}
                 
                 {msg.text && <p className="text-sm">{msg.text}</p>}
                 
                 <p className={`text-[10px] mt-1 text-right ${isMe ? 'text-rose-200' : 'text-zinc-500'}`}>
                   {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
+                  {isMe && (
+                    <span className="ml-1">
+                      {msg.isRead ? '• Read' : '• Delivered'}
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
           );
         })}
+        
+        {otherUserTyping && (
+          <div className="flex justify-start">
+            <div className="bg-zinc-800 text-zinc-400 rounded-2xl rounded-bl-sm px-4 py-2 text-sm flex items-center space-x-1">
+              <span className="animate-bounce">.</span>
+              <span className="animate-bounce" style={{ animationDelay: '0.2s' }}>.</span>
+              <span className="animate-bounce" style={{ animationDelay: '0.4s' }}>.</span>
+            </div>
+          </div>
+        )}
+        
         <div ref={messagesEndRef} />
       </div>
 
@@ -393,6 +594,22 @@ export default function Chat() {
             <Camera className="w-6 h-6" />
           </button>
           
+          <button 
+            type="button" 
+            onClick={() => fileInputRef.current?.click()}
+            className="p-2 text-zinc-400 hover:text-rose-500 transition-colors"
+            title="Send Media"
+          >
+            <ImageIcon className="w-6 h-6" />
+          </button>
+          <input 
+            type="file" 
+            accept="image/*,video/*" 
+            className="hidden" 
+            ref={fileInputRef} 
+            onChange={handleMediaUpload} 
+          />
+          
           {messages.length > 0 && (
             <button 
               type="button"
@@ -405,20 +622,56 @@ export default function Chat() {
             </button>
           )}
 
-          <input
-            type="text"
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            placeholder="Type a message..."
-            className="flex-1 bg-zinc-800 border border-zinc-700 text-white rounded-full px-4 py-2 focus:outline-none focus:ring-1 focus:ring-rose-500"
-          />
           <button 
-            type="submit" 
-            disabled={!newMessage.trim()}
-            className="p-2 bg-rose-600 text-white rounded-full hover:bg-rose-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            type="button"
+            onClick={() => setShowSavedPhrases(true)}
+            className="p-2 text-zinc-400 hover:text-rose-500 transition-colors"
+            title="Saved Phrases"
           >
-            <Send className="w-5 h-5" />
+            <Bookmark className="w-5 h-5" />
           </button>
+
+          {isRecording ? (
+            <div className="flex-1 flex items-center justify-between bg-rose-500/20 border border-rose-500/50 text-rose-500 rounded-full px-4 py-2">
+              <div className="flex items-center">
+                <div className="w-2 h-2 bg-rose-500 rounded-full animate-pulse mr-2"></div>
+                <span className="text-sm font-medium">Recording... {recordingDuration}s</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={stopRecording}
+                className="p-1 hover:bg-rose-500/20 rounded-full"
+              >
+                <Square className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={newMessage}
+              onChange={handleTyping}
+              placeholder="Type a message..."
+              className="flex-1 bg-zinc-800 border border-zinc-700 text-white rounded-full px-4 py-2 focus:outline-none focus:ring-1 focus:ring-rose-500"
+            />
+          )}
+
+          {newMessage.trim() || isRecording ? (
+            <button 
+              type="submit" 
+              disabled={!newMessage.trim() && !isRecording}
+              className="p-2 bg-rose-600 text-white rounded-full hover:bg-rose-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          ) : (
+            <button 
+              type="button" 
+              onClick={startRecording}
+              className="p-2 bg-zinc-800 text-zinc-400 rounded-full hover:bg-zinc-700 hover:text-white transition-colors"
+            >
+              <Mic className="w-5 h-5" />
+            </button>
+          )}
         </form>
       </div>
 
@@ -468,6 +721,72 @@ export default function Chat() {
             </button>
             <div className="absolute top-4 left-4 bg-rose-500 text-white text-xs font-bold px-2 py-1 rounded-md flex items-center">
               <Eye className="w-3 h-3 mr-1" /> View Once
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Saved Phrases Modal */}
+      {showSavedPhrases && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl relative">
+            <div className="p-4 border-b border-zinc-800 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-white flex items-center">
+                <Bookmark className="w-5 h-5 mr-2 text-rose-500" />
+                Saved Phrases
+              </h2>
+              <button 
+                onClick={() => setShowSavedPhrases(false)}
+                className="p-2 bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 max-h-96 overflow-y-auto space-y-2">
+              {savedPhrases.length === 0 ? (
+                <p className="text-zinc-500 text-center py-4">No saved phrases yet.</p>
+              ) : (
+                savedPhrases.map(phrase => (
+                  <div key={phrase.id} className="flex items-center justify-between bg-zinc-800 p-3 rounded-xl group">
+                    <p 
+                      className="text-zinc-200 flex-1 cursor-pointer hover:text-white"
+                      onClick={() => {
+                        setNewMessage(phrase.text);
+                        setShowSavedPhrases(false);
+                      }}
+                    >
+                      {phrase.text}
+                    </p>
+                    <button 
+                      onClick={() => handleDeletePhrase(phrase.id)}
+                      className="opacity-0 group-hover:opacity-100 p-2 text-zinc-500 hover:text-rose-500 transition-opacity"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="p-4 border-t border-zinc-800 flex space-x-2">
+              <input
+                type="text"
+                value={newPhrase}
+                onChange={(e) => setNewPhrase(e.target.value)}
+                placeholder="Add a new phrase..."
+                className="flex-1 bg-zinc-800 border border-zinc-700 text-white rounded-xl px-4 py-2 focus:outline-none focus:border-rose-500"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAddPhrase();
+                }}
+              />
+              <button 
+                onClick={handleAddPhrase}
+                disabled={!newPhrase.trim()}
+                className="px-4 py-2 bg-rose-600 text-white rounded-xl hover:bg-rose-700 transition-colors disabled:opacity-50"
+              >
+                Add
+              </button>
             </div>
           </div>
         </div>

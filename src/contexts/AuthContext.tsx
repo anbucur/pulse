@@ -1,13 +1,16 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, UserCredential, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+import { registerFCMToken } from '../lib/notifications';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   isVerified: boolean;
   hasProfile: boolean;
+  isPremium: boolean;
+  blockedUsers: string[];
   signInWithGoogle: () => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<UserCredential>;
   signInWithEmail: (email: string, password: string) => Promise<UserCredential>;
@@ -23,21 +26,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isVerified, setIsVerified] = useState(false);
   const [hasProfile, setHasProfile] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
 
   const checkProfileStatus = async (uid: string) => {
     try {
       const userDoc = await getDoc(doc(db, 'users', uid));
       if (userDoc.exists()) {
-        setIsVerified(userDoc.data().isVerified || false);
+        const data = userDoc.data();
+        setIsVerified(data.isVerified || false);
+        setIsPremium(data.isPremium || false);
       } else {
         // Create base user doc if it doesn't exist
         await setDoc(doc(db, 'users', uid), {
           uid,
           email: auth.currentUser?.email || '',
           role: 'user',
-          isVerified: false
+          isVerified: false,
+          isPremium: false
         });
         setIsVerified(false);
+        setIsPremium(false);
       }
 
       const profileDoc = await getDoc(doc(db, 'public_profiles', uid));
@@ -48,18 +57,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
+    let blockedUnsub: (() => void) | undefined;
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
         await checkProfileStatus(currentUser.uid);
+        registerFCMToken(currentUser.uid);
+        
+        // Listen to blocked users
+        blockedUnsub = onSnapshot(collection(db, `blocks/${currentUser.uid}/blocked`), (snapshot) => {
+          setBlockedUsers(snapshot.docs.map(doc => doc.id));
+        });
       } else {
         setIsVerified(false);
         setHasProfile(false);
+        setIsPremium(false);
+        setBlockedUsers([]);
+        if (blockedUnsub) blockedUnsub();
       }
       setLoading(false);
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      if (blockedUnsub) blockedUnsub();
+    };
   }, []);
 
   const signInWithGoogle = async () => {
@@ -108,7 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, isVerified, hasProfile, signInWithGoogle, signUpWithEmail, signInWithEmail, resetPassword, logout, checkProfileStatus }}>
+    <AuthContext.Provider value={{ user, loading, isVerified, hasProfile, isPremium, blockedUsers, signInWithGoogle, signUpWithEmail, signInWithEmail, resetPassword, logout, checkProfileStatus }}>
       {!loading && children}
     </AuthContext.Provider>
   );

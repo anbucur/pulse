@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { collection, query, onSnapshot, where, getDocs, addDoc, serverTimestamp, updateDoc, doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Search, Zap, MapPin, Filter, MessageCircle, Map as MapIcon, Grid as GridIcon, X, Sparkles, Radio, Flame, ShieldCheck } from 'lucide-react';
+import { Search, Zap, MapPin, Filter, MessageCircle, Map as MapIcon, Grid as GridIcon, X, Sparkles, Radio, Flame, ShieldCheck, Heart, ThumbsUp, Dog, Ban, AlertTriangle } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
@@ -25,6 +25,8 @@ interface Profile {
   uid: string;
   displayName: string;
   photoURL: string;
+  photos?: string[];
+  videoURL?: string;
   age: number;
   height: number;
   weight: number;
@@ -39,6 +41,18 @@ interface Profile {
   broadcast?: string;
   broadcastExpiresAt?: number;
   isVerified?: boolean;
+  hivStatus?: string;
+  lastTested?: string;
+  pronouns?: string;
+  relationship?: string;
+  bodyType?: string;
+  boostExpiresAt?: number;
+  incognitoMode?: boolean;
+  messagingPref?: string;
+  prepStatus?: string;
+  travelCity?: string;
+  tags?: string[];
+  tribes?: string[];
 }
 
 function HeatmapLayer({ points }: { points: [number, number, number][] }) {
@@ -82,6 +96,18 @@ export default function Grid() {
   const [myProfile, setMyProfile] = useState<Profile | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [intentFilter, setIntentFilter] = useState<string | null>(null);
+  const [selectedProfileAlbums, setSelectedProfileAlbums] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user || !selectedProfile) {
+      setSelectedProfileAlbums([]);
+      return;
+    }
+    const unsubscribeAlbums = onSnapshot(collection(db, `albums/${selectedProfile.uid}/photos`), (snapshot) => {
+      setSelectedProfileAlbums(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsubscribeAlbums();
+  }, [user, selectedProfile]);
 
   const seedDemoProfiles = async () => {
     if (!myProfile) return;
@@ -138,8 +164,44 @@ export default function Grid() {
     }
   };
 
+  const [sortBy, setSortBy] = useState<'distance' | 'lastActive' | 'boost'>('distance');
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [likes, setLikes] = useState<string[]>([]);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    minAge: 18, maxAge: 99,
+    minHeight: 100, maxHeight: 250,
+    minWeight: 40, maxWeight: 200,
+    tribes: [] as string[],
+    role: '',
+    maxDistanceKm: 100
+  });
+
+  // Haversine distance calculation
+  const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
+      Math.sin(dLon / 2) * Math.sin(dLon / 2); 
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
+    return R * c; // Distance in km
+  };
+
   useEffect(() => {
     if (!user) return;
+
+    // Fetch favorites
+    const favUnsub = onSnapshot(collection(db, `favorites/${user.uid}/items`), (snap) => {
+      setFavorites(snap.docs.map(doc => doc.id));
+    });
+
+    // Fetch likes sent
+    const likesUnsub = onSnapshot(collection(db, `likes/${user.uid}/sent`), (snap) => {
+      setLikes(snap.docs.map(doc => doc.id));
+    });
 
     // Fetch own profile for Vibe Match
     getDoc(doc(db, 'public_profiles', user.uid)).then(snap => {
@@ -156,18 +218,14 @@ export default function Grid() {
           fetchedProfiles.push(data);
         }
       });
-      
-      // Sort: Live Pulse first, then by distance (mocked distance for now)
-      fetchedProfiles.sort((a, b) => {
-        const aLive = a.livePulseExpiresAt && a.livePulseExpiresAt > Date.now() ? 1 : 0;
-        const bLive = b.livePulseExpiresAt && b.livePulseExpiresAt > Date.now() ? 1 : 0;
-        return bLive - aLive;
-      });
-
       setProfiles(fetchedProfiles);
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      favUnsub();
+      likesUnsub();
+    };
   }, [user]);
 
   const handleSemanticSearch = async (e: React.FormEvent) => {
@@ -256,9 +314,102 @@ export default function Grid() {
     }
   };
 
-  const openProfile = (profile: Profile) => {
+  const openProfile = async (profile: Profile) => {
     setSelectedProfile(profile);
     calculateVibeMatch(profile);
+    
+    // Record profile view
+    if (user && myProfile && !myProfile.incognitoMode) {
+      try {
+        await setDoc(doc(db, `profile_views/${profile.uid}/viewers/${user.uid}`), {
+          viewedAt: Date.now()
+        });
+      } catch (e) {
+        console.error("Error recording profile view", e);
+      }
+    }
+  };
+
+  const toggleFavorite = async (profileId: string) => {
+    if (!user) return;
+    const isFav = favorites.includes(profileId);
+    try {
+      if (isFav) {
+        await setDoc(doc(db, `favorites/${user.uid}/items/${profileId}`), { deleted: true }); // deleteDoc alternative if we want soft delete, but let's use deleteDoc
+      } else {
+        await setDoc(doc(db, `favorites/${user.uid}/items/${profileId}`), { addedAt: Date.now() });
+      }
+    } catch (e) {
+      console.error("Error toggling favorite", e);
+    }
+  };
+
+  const toggleLike = async (profileId: string) => {
+    if (!user) return;
+    const isLiked = likes.includes(profileId);
+    try {
+      if (isLiked) {
+        // We don't delete likes usually, but for toggle we can
+        // await deleteDoc(doc(db, `likes/${user.uid}/sent/${profileId}`));
+      } else {
+        await setDoc(doc(db, `likes/${user.uid}/sent/${profileId}`), { sentAt: Date.now() });
+        // Check mutual match
+        const mutualSnap = await getDoc(doc(db, `likes/${profileId}/sent/${user.uid}`));
+        if (mutualSnap.exists()) {
+          alert("It's a mutual match!"); // In real app, use a toast
+        }
+      }
+    } catch (e) {
+      console.error("Error toggling like", e);
+    }
+  };
+
+  const sendTap = async (profileId: string) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, `taps/${profileId}/received/${user.uid}`), {
+        sentAt: Date.now(),
+        type: 'woof'
+      });
+      alert("Woof sent!");
+    } catch (e) {
+      console.error("Error sending tap", e);
+    }
+  };
+
+  const handleBlock = async (profileId: string) => {
+    if (!user) return;
+    if (window.confirm("Are you sure you want to block this user? They will no longer be able to see your profile or contact you.")) {
+      try {
+        await setDoc(doc(db, `blocks/${user.uid}/blocked/${profileId}`), {
+          blockedAt: Date.now()
+        });
+        alert("User blocked.");
+        setSelectedProfile(null);
+      } catch (e) {
+        console.error("Error blocking user", e);
+      }
+    }
+  };
+
+  const handleReport = async (profileId: string) => {
+    if (!user) return;
+    const reason = window.prompt("Please provide a reason for reporting this user:");
+    if (reason) {
+      try {
+        await addDoc(collection(db, `reports`), {
+          reporterId: user.uid,
+          reportedId: profileId,
+          reason,
+          timestamp: Date.now(),
+          status: 'pending'
+        });
+        alert("Report submitted. Thank you.");
+        setSelectedProfile(null);
+      } catch (e) {
+        console.error("Error reporting user", e);
+      }
+    }
   };
 
   const startChat = async (otherUid: string) => {
@@ -323,7 +474,39 @@ export default function Grid() {
     checkOwnStatus();
   }, [user]);
 
-  const filteredProfiles = profiles.filter(p => !intentFilter || p.intent === intentFilter);
+  const filteredProfiles = profiles.filter(p => {
+    if (intentFilter === 'Favorites') return favorites.includes(p.uid);
+    if (intentFilter && p.intent !== intentFilter) return false;
+    
+    // Advanced filters
+    if (p.age < filters.minAge || p.age > filters.maxAge) return false;
+    if (p.height < filters.minHeight || p.height > filters.maxHeight) return false;
+    if (p.weight < filters.minWeight || p.weight > filters.maxWeight) return false;
+    if (filters.role && p.sexualRole !== filters.role) return false;
+    if (filters.tribes.length > 0 && (!p.tribes || !filters.tribes.some(t => p.tribes?.includes(t)))) return false;
+    
+    if (myProfile) {
+      const dist = getDistance(myProfile.lat, myProfile.lng, p.lat, p.lng);
+      if (dist > filters.maxDistanceKm) return false;
+    }
+    
+    return true;
+  }).sort((a, b) => {
+    // Boosted profiles first
+    const aBoost = a.boostExpiresAt && a.boostExpiresAt > Date.now() ? 1 : 0;
+    const bBoost = b.boostExpiresAt && b.boostExpiresAt > Date.now() ? 1 : 0;
+    if (aBoost !== bBoost) return bBoost - aBoost;
+
+    if (sortBy === 'distance' && myProfile) {
+      const distA = getDistance(myProfile.lat, myProfile.lng, a.lat, a.lng);
+      const distB = getDistance(myProfile.lat, myProfile.lng, b.lat, b.lng);
+      return distA - distB;
+    } else if (sortBy === 'lastActive') {
+      return b.lastActive - a.lastActive;
+    }
+    return 0;
+  });
+
   const activeBroadcasts = filteredProfiles.filter(p => p.broadcast && p.broadcastExpiresAt && p.broadcastExpiresAt > Date.now());
 
   return (
@@ -363,14 +546,16 @@ export default function Grid() {
             {isSearching ? (
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-rose-500"></div>
             ) : (
-              <Filter className="h-5 w-5 text-zinc-500" />
+              <button type="button" onClick={() => setShowFilters(true)}>
+                <Filter className="h-5 w-5 text-zinc-500 hover:text-white transition-colors" />
+              </button>
             )}
           </div>
         </form>
 
         {/* Intent Filters */}
         <div className="flex overflow-x-auto gap-2 mt-4 pb-1 scrollbar-hide">
-          {['All', 'Dates', 'Networking', 'Chat', 'Right Now'].map(intent => (
+          {['All', 'Favorites', 'Dates', 'Networking', 'Chat', 'Right Now'].map(intent => (
             <button
               key={intent}
               onClick={() => setIntentFilter(intent === 'All' ? null : intent)}
@@ -406,6 +591,10 @@ export default function Grid() {
         <div className="p-2 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
           {filteredProfiles.map((profile) => {
             const isLive = profile.livePulseExpiresAt && profile.livePulseExpiresAt > Date.now();
+            const isBoosted = profile.boostExpiresAt && profile.boostExpiresAt > Date.now();
+            const dist = myProfile ? getDistance(myProfile.lat, myProfile.lng, profile.lat, profile.lng) : 0;
+            const distDisplay = dist < 1 ? `${Math.round(dist * 1000)}m` : `${dist.toFixed(1)}km`;
+
             return (
               <div 
                 key={profile.uid} 
@@ -433,11 +622,12 @@ export default function Grid() {
                     <h3 className="text-white font-bold text-lg leading-tight flex items-center">
                       {profile.displayName}, {profile.age}
                       {profile.isVerified && <ShieldCheck className="w-4 h-4 text-blue-500 ml-1" title="Verified" />}
+                      {isBoosted && <Zap className="w-4 h-4 text-amber-500 ml-1" title="Boosted" />}
                     </h3>
                     {isLive && <Zap className="w-4 h-4 text-rose-500 fill-rose-500" />}
                   </div>
                   <div className="flex items-center text-zinc-300 text-xs mt-1 space-x-2">
-                    <span className="flex items-center"><MapPin className="w-3 h-3 mr-0.5" /> 1.2m</span>
+                    <span className="flex items-center"><MapPin className="w-3 h-3 mr-0.5" /> {distDisplay}</span>
                     <span>•</span>
                     <span>{profile.sexualRole}</span>
                   </div>
@@ -548,6 +738,45 @@ export default function Grid() {
             </div>
 
             <div className="p-6 space-y-6">
+              {/* Media Gallery */}
+              {(selectedProfile.photos?.length > 0 || selectedProfile.videoURL) && (
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Media</h3>
+                  
+                  {/* Video */}
+                  {selectedProfile.videoURL && (
+                    <div className="relative aspect-video rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
+                      <video src={selectedProfile.videoURL} controls className="w-full h-full object-cover" />
+                    </div>
+                  )}
+
+                  {/* Photos */}
+                  {selectedProfile.photos?.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {selectedProfile.photos.map((url: string, idx: number) => (
+                        <div key={idx} className="relative aspect-[3/4] rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
+                          <img src={url} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Private Albums */}
+              {selectedProfileAlbums.length > 0 && (
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Private Albums</h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    {selectedProfileAlbums.map((photo) => (
+                      <div key={photo.id} className="relative aspect-square rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
+                        <img src={photo.url} alt="Private Album" className="w-full h-full object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Vibe Match */}
               <div className="bg-zinc-800/50 rounded-2xl p-4 border border-zinc-700/50">
                 <div className="flex items-center mb-2">
@@ -597,12 +826,199 @@ export default function Grid() {
                 <p className="text-zinc-300 text-sm leading-relaxed">{selectedProfile.bio || "No bio provided."}</p>
               </div>
 
+              {/* Extended Stats */}
+              <div className="grid grid-cols-2 gap-4">
+                {selectedProfile.pronouns && (
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Pronouns</h3>
+                    <p className="text-sm text-white">{selectedProfile.pronouns}</p>
+                  </div>
+                )}
+                {selectedProfile.relationship && (
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Relationship</h3>
+                    <p className="text-sm text-white">{selectedProfile.relationship}</p>
+                  </div>
+                )}
+                {selectedProfile.bodyType && (
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Body Type</h3>
+                    <p className="text-sm text-white">{selectedProfile.bodyType}</p>
+                  </div>
+                )}
+                {selectedProfile.hivStatus && (
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">HIV Status</h3>
+                    <p className="text-sm text-white">{selectedProfile.hivStatus}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Tags & Tribes */}
+              {(selectedProfile.tribes?.length > 0 || selectedProfile.tags?.length > 0) && (
+                <div className="space-y-4">
+                  {selectedProfile.tribes?.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Tribes</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedProfile.tribes.map((tribe: string, idx: number) => (
+                          <span key={idx} className="bg-rose-500/10 text-rose-500 border border-rose-500/20 px-3 py-1 rounded-full text-sm font-medium">
+                            {tribe}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {selectedProfile.tags?.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Tags</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedProfile.tags.map((tag: string, idx: number) => (
+                          <span key={idx} className="bg-zinc-800 text-zinc-300 px-3 py-1 rounded-full text-sm">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex space-x-2">
+                <button 
+                  onClick={() => toggleFavorite(selectedProfile.uid)}
+                  className={`flex-1 flex items-center justify-center px-4 py-3 rounded-2xl font-bold transition-colors ${favorites.includes(selectedProfile.uid) ? 'bg-rose-500/20 text-rose-500 border border-rose-500/50' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}
+                >
+                  <Heart className={`w-5 h-5 mr-2 ${favorites.includes(selectedProfile.uid) ? 'fill-rose-500' : ''}`} />
+                  Favorite
+                </button>
+                <button 
+                  onClick={() => toggleLike(selectedProfile.uid)}
+                  className={`flex-1 flex items-center justify-center px-4 py-3 rounded-2xl font-bold transition-colors ${likes.includes(selectedProfile.uid) ? 'bg-blue-500/20 text-blue-500 border border-blue-500/50' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}
+                >
+                  <ThumbsUp className={`w-5 h-5 mr-2 ${likes.includes(selectedProfile.uid) ? 'fill-blue-500' : ''}`} />
+                  Like
+                </button>
+                <button 
+                  onClick={() => sendTap(selectedProfile.uid)}
+                  className="flex-1 flex items-center justify-center px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-2xl font-bold transition-colors"
+                >
+                  <Dog className="w-5 h-5 mr-2" />
+                  Woof
+                </button>
+              </div>
+
               <button 
                 onClick={() => startChat(selectedProfile.uid)}
                 className="w-full flex items-center justify-center px-6 py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-full font-bold text-lg transition-colors shadow-lg shadow-rose-500/20"
               >
                 <MessageCircle className="w-6 h-6 mr-2" />
                 Start Chat
+              </button>
+
+              <div className="flex justify-center space-x-4 pt-4 border-t border-zinc-800">
+                <button 
+                  onClick={() => handleBlock(selectedProfile.uid)}
+                  className="text-sm text-zinc-500 hover:text-rose-500 transition-colors flex items-center"
+                >
+                  <Ban className="w-4 h-4 mr-1" />
+                  Block
+                </button>
+                <button 
+                  onClick={() => handleReport(selectedProfile.uid)}
+                  className="text-sm text-zinc-500 hover:text-rose-500 transition-colors flex items-center"
+                >
+                  <AlertTriangle className="w-4 h-4 mr-1" />
+                  Report
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Filter Drawer */}
+      {showFilters && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/80 backdrop-blur-sm">
+          <div className="bg-zinc-900 w-full max-w-sm h-full overflow-y-auto p-6 shadow-2xl animate-in slide-in-from-right">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-white">Filters</h2>
+              <button onClick={() => setShowFilters(false)} className="p-2 bg-zinc-800 rounded-full text-zinc-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">Sort By</label>
+                <select 
+                  value={sortBy} 
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-rose-500"
+                >
+                  <option value="distance">Distance</option>
+                  <option value="lastActive">Recently Active</option>
+                  <option value="boost">Boosted</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">Max Distance: {filters.maxDistanceKm}km</label>
+                <input 
+                  type="range" min="1" max="500" 
+                  value={filters.maxDistanceKm} 
+                  onChange={(e) => setFilters({...filters, maxDistanceKm: parseInt(e.target.value)})}
+                  className="w-full accent-rose-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">Age Range: {filters.minAge} - {filters.maxAge}</label>
+                <div className="flex space-x-2">
+                  <input 
+                    type="number" min="18" max="99" 
+                    value={filters.minAge} 
+                    onChange={(e) => setFilters({...filters, minAge: parseInt(e.target.value)})}
+                    className="w-1/2 bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2 text-white"
+                  />
+                  <input 
+                    type="number" min="18" max="99" 
+                    value={filters.maxAge} 
+                    onChange={(e) => setFilters({...filters, maxAge: parseInt(e.target.value)})}
+                    className="w-1/2 bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2 text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">Role</label>
+                <select 
+                  value={filters.role} 
+                  onChange={(e) => setFilters({...filters, role: e.target.value})}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-rose-500"
+                >
+                  <option value="">Any</option>
+                  <option value="Top">Top</option>
+                  <option value="Bottom">Bottom</option>
+                  <option value="Versatile">Versatile</option>
+                  <option value="Side">Side</option>
+                </select>
+              </div>
+
+              <button 
+                onClick={() => {
+                  setFilters({
+                    minAge: 18, maxAge: 99,
+                    minHeight: 100, maxHeight: 250,
+                    minWeight: 40, maxWeight: 200,
+                    tribes: [],
+                    role: '',
+                    maxDistanceKm: 100
+                  });
+                  setSortBy('distance');
+                }}
+                className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-medium transition-colors"
+              >
+                Reset Filters
               </button>
             </div>
           </div>

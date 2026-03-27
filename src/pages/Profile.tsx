@@ -1,23 +1,32 @@
 /// <reference types="vite/client" />
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, setDoc, deleteDoc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
-import { LogOut, Edit3, Settings, ShieldCheck, EyeOff, MapPin, Radio, Sparkles, Loader2, Camera, X, CheckCircle } from 'lucide-react';
+import { LogOut, Edit3, Settings, ShieldCheck, EyeOff, MapPin, Radio, Sparkles, Loader2, Camera, X, CheckCircle, Zap, Eye, Dog, Image as ImageIcon, Video } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import Webcam from 'react-webcam';
+import { uploadMedia } from '../lib/uploadMedia';
 
 export default function Profile() {
-  const { user, logout } = useAuth();
+  const { user, logout, isPremium } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [isGhostMode, setIsGhostMode] = useState(false);
+  const [incognitoMode, setIncognitoMode] = useState(false);
   const [broadcast, setBroadcast] = useState('');
   const [travelLat, setTravelLat] = useState('');
   const [travelLng, setTravelLng] = useState('');
   const [optimizing, setOptimizing] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [viewers, setViewers] = useState<any[]>([]);
+  const [taps, setTaps] = useState<any[]>([]);
+  const [albums, setAlbums] = useState<any[]>([]);
   const webcamRef = useRef<Webcam>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
+  const albumInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -28,20 +37,172 @@ export default function Profile() {
         const data = docSnap.data();
         setProfile(data);
         setIsGhostMode(data.isGhostMode || false);
+        setIncognitoMode(data.incognitoMode || false);
         setBroadcast(data.broadcast || '');
         setTravelLat(data.lat?.toString() || '');
         setTravelLng(data.lng?.toString() || '');
       }
     };
     fetchProfile();
+
+    // Fetch viewers
+    const viewersUnsub = onSnapshot(query(collection(db, `profile_views/${user.uid}/viewers`), orderBy('viewedAt', 'desc'), limit(20)), async (snap) => {
+      const viewersData = await Promise.all(snap.docs.map(async (d) => {
+        const pSnap = await getDoc(doc(db, 'public_profiles', d.id));
+        return { id: d.id, viewedAt: d.data().viewedAt, profile: pSnap.data() };
+      }));
+      setViewers(viewersData.filter(v => v.profile));
+    });
+
+    // Fetch taps
+    const tapsUnsub = onSnapshot(query(collection(db, `taps/${user.uid}/received`), orderBy('sentAt', 'desc'), limit(20)), async (snap) => {
+      const tapsData = await Promise.all(snap.docs.map(async (d) => {
+        const pSnap = await getDoc(doc(db, 'public_profiles', d.id));
+        return { id: d.id, sentAt: d.data().sentAt, type: d.data().type, profile: pSnap.data() };
+      }));
+      setTaps(tapsData.filter(t => t.profile));
+    });
+
+    // Fetch albums
+    const albumsUnsub = onSnapshot(collection(db, `albums/${user.uid}/photos`), (snap) => {
+      setAlbums(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => {
+      viewersUnsub();
+      tapsUnsub();
+      albumsUnsub();
+    };
   }, [user]);
+
+  const handleAlbumUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!user || !e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    
+    setUploadingMedia(true);
+    try {
+      const url = await uploadMedia(file, `albums/${user.uid}/${Date.now()}_${file.name}`);
+      await setDoc(doc(collection(db, `albums/${user.uid}/photos`)), {
+        url,
+        createdAt: Date.now()
+      });
+    } catch (error) {
+      console.error('Error uploading album photo:', error);
+      alert('Failed to upload album photo.');
+    } finally {
+      setUploadingMedia(false);
+      if (albumInputRef.current) albumInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveAlbumPhoto = async (photoId: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, `albums/${user.uid}/photos`, photoId));
+    } catch (error) {
+      console.error('Error removing album photo:', error);
+    }
+  };
+
+  const handleBoost = async () => {
+    if (!user || !profile) return;
+    if (!isPremium) {
+      alert("Boost is a Pulse+ premium feature.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'public_profiles', user.uid), {
+        boostExpiresAt: Date.now() + 30 * 60 * 1000 // 30 minutes
+      });
+      alert('Profile boosted for 30 minutes!');
+      setProfile({ ...profile, boostExpiresAt: Date.now() + 30 * 60 * 1000 });
+    } catch (e) {
+      console.error("Error boosting profile", e);
+    }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!user || !profile || !e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    
+    setUploadingMedia(true);
+    try {
+      const url = await uploadMedia(file, `profiles/${user.uid}/photos/${Date.now()}_${file.name}`);
+      const updatedPhotos = [...(profile.photos || []), url];
+      await updateDoc(doc(db, 'public_profiles', user.uid), {
+        photos: updatedPhotos
+      });
+      setProfile({ ...profile, photos: updatedPhotos });
+    } catch (error) {
+      console.error('Error uploading photo:', error);
+      alert('Failed to upload photo.');
+    } finally {
+      setUploadingMedia(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!user || !profile || !e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    
+    setUploadingMedia(true);
+    try {
+      const url = await uploadMedia(file, `profiles/${user.uid}/videos/${Date.now()}_${file.name}`);
+      await updateDoc(doc(db, 'public_profiles', user.uid), {
+        videoURL: url
+      });
+      setProfile({ ...profile, videoURL: url });
+    } catch (error) {
+      console.error('Error uploading video:', error);
+      alert('Failed to upload video.');
+    } finally {
+      setUploadingMedia(false);
+      if (videoInputRef.current) videoInputRef.current.value = '';
+    }
+  };
+
+  const handleRemovePhoto = async (index: number) => {
+    if (!user || !profile) return;
+    const updatedPhotos = [...(profile.photos || [])];
+    updatedPhotos.splice(index, 1);
+    await updateDoc(doc(db, 'public_profiles', user.uid), {
+      photos: updatedPhotos
+    });
+    setProfile({ ...profile, photos: updatedPhotos });
+  };
+
+  const handleRemoveVideo = async () => {
+    if (!user || !profile) return;
+    await updateDoc(doc(db, 'public_profiles', user.uid), {
+      videoURL: null
+    });
+    setProfile({ ...profile, videoURL: null });
+  };
 
   const handleToggleGhostMode = async () => {
     if (!user || !profile) return;
+    if (!isPremium) {
+      alert("Ghost Mode is a Pulse+ premium feature.");
+      return;
+    }
     const newMode = !isGhostMode;
     setIsGhostMode(newMode);
     await updateDoc(doc(db, 'public_profiles', user.uid), {
       isGhostMode: newMode
+    });
+  };
+
+  const handleToggleIncognitoMode = async () => {
+    if (!user || !profile) return;
+    if (!isPremium) {
+      alert("Incognito Mode is a Pulse+ premium feature.");
+      return;
+    }
+    const newMode = !incognitoMode;
+    setIncognitoMode(newMode);
+    await updateDoc(doc(db, 'public_profiles', user.uid), {
+      incognitoMode: newMode
     });
   };
 
@@ -295,9 +456,338 @@ export default function Profile() {
           <p className="text-zinc-300 leading-relaxed">{profile.bio || "No bio provided."}</p>
         </div>
 
+        {/* Tags & Tribes */}
+        <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+          <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-4">Tags & Tribes</h3>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs text-zinc-500 mb-2">Tribes (e.g. Bear, Twink, Jock)</label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {profile.tribes?.map((tribe: string, idx: number) => (
+                  <span key={idx} className="bg-zinc-800 text-zinc-300 px-3 py-1 rounded-full text-sm flex items-center">
+                    {tribe}
+                    <button 
+                      onClick={() => {
+                        const newTribes = profile.tribes.filter((_: any, i: number) => i !== idx);
+                        setProfile({...profile, tribes: newTribes});
+                        updateDoc(doc(db, 'public_profiles', user.uid), { tribes: newTribes });
+                      }}
+                      className="ml-2 text-zinc-500 hover:text-rose-500"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <input 
+                type="text" 
+                placeholder="Type and press Enter..." 
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.currentTarget.value) {
+                    const val = e.currentTarget.value.trim();
+                    if (val && !(profile.tribes || []).includes(val)) {
+                      const newTribes = [...(profile.tribes || []), val];
+                      setProfile({...profile, tribes: newTribes});
+                      updateDoc(doc(db, 'public_profiles', user.uid), { tribes: newTribes });
+                    }
+                    e.currentTarget.value = '';
+                  }
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-zinc-500 mb-2">Tags (e.g. Gym, Travel, Coffee)</label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {profile.tags?.map((tag: string, idx: number) => (
+                  <span key={idx} className="bg-zinc-800 text-zinc-300 px-3 py-1 rounded-full text-sm flex items-center">
+                    {tag}
+                    <button 
+                      onClick={() => {
+                        const newTags = profile.tags.filter((_: any, i: number) => i !== idx);
+                        setProfile({...profile, tags: newTags});
+                        updateDoc(doc(db, 'public_profiles', user.uid), { tags: newTags });
+                      }}
+                      className="ml-2 text-zinc-500 hover:text-rose-500"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <input 
+                type="text" 
+                placeholder="Type and press Enter..." 
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.currentTarget.value) {
+                    const val = e.currentTarget.value.trim();
+                    if (val && !(profile.tags || []).includes(val)) {
+                      const newTags = [...(profile.tags || []), val];
+                      setProfile({...profile, tags: newTags});
+                      updateDoc(doc(db, 'public_profiles', user.uid), { tags: newTags });
+                    }
+                    e.currentTarget.value = '';
+                  }
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Private Albums */}
+        <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">Private Albums</h3>
+            {uploadingMedia && <Loader2 className="w-4 h-4 text-rose-500 animate-spin" />}
+          </div>
+          
+          <div className="space-y-6">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <p className="font-medium flex items-center">
+                  <ImageIcon className="w-4 h-4 mr-2 text-zinc-400" /> Private Photos
+                </p>
+                <button 
+                  onClick={() => albumInputRef.current?.click()}
+                  disabled={uploadingMedia || albums.length >= 10}
+                  className="text-xs bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Add Photo
+                </button>
+                <input 
+                  type="file" 
+                  ref={albumInputRef} 
+                  onChange={handleAlbumUpload} 
+                  accept="image/*" 
+                  className="hidden" 
+                />
+              </div>
+              
+              <div className="grid grid-cols-3 gap-2">
+                {albums.map((photo) => (
+                  <div key={photo.id} className="relative aspect-square rounded-xl overflow-hidden group">
+                    <img src={photo.url} alt="Album" className="w-full h-full object-cover" />
+                    <button 
+                      onClick={() => handleRemoveAlbumPhoto(photo.id)}
+                      className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-rose-500"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                {albums.length === 0 && (
+                  <div className="col-span-3 aspect-[3/1] rounded-xl border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center text-zinc-500">
+                    <ImageIcon className="w-8 h-8 mb-2 opacity-50" />
+                    <p className="text-sm">No private photos yet</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Extended Stats */}
+        <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+          <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-4">Extended Stats</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Pronouns</label>
+              <input 
+                type="text" 
+                value={profile.pronouns || ''} 
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setProfile({...profile, pronouns: val});
+                  updateDoc(doc(db, 'public_profiles', user.uid), { pronouns: val });
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
+                placeholder="e.g. he/him"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Relationship</label>
+              <select 
+                value={profile.relationship || ''} 
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setProfile({...profile, relationship: val});
+                  updateDoc(doc(db, 'public_profiles', user.uid), { relationship: val });
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
+              >
+                <option value="">Select...</option>
+                <option value="Single">Single</option>
+                <option value="Partnered">Partnered</option>
+                <option value="Married">Married</option>
+                <option value="Open Relationship">Open Relationship</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Body Type</label>
+              <select 
+                value={profile.bodyType || ''} 
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setProfile({...profile, bodyType: val});
+                  updateDoc(doc(db, 'public_profiles', user.uid), { bodyType: val });
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
+              >
+                <option value="">Select...</option>
+                <option value="Slim">Slim</option>
+                <option value="Athletic">Athletic</option>
+                <option value="Average">Average</option>
+                <option value="Muscular">Muscular</option>
+                <option value="Stocky">Stocky</option>
+                <option value="Large">Large</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">HIV Status</label>
+              <select 
+                value={profile.hivStatus || ''} 
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setProfile({...profile, hivStatus: val});
+                  updateDoc(doc(db, 'public_profiles', user.uid), { hivStatus: val });
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
+              >
+                <option value="">Select...</option>
+                <option value="Negative">Negative</option>
+                <option value="Negative, on PrEP">Negative, on PrEP</option>
+                <option value="Positive, Undetectable">Positive, Undetectable</option>
+                <option value="Positive">Positive</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Media */}
+        <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">Media</h3>
+            {uploadingMedia && <Loader2 className="w-4 h-4 text-rose-500 animate-spin" />}
+          </div>
+          
+          <div className="space-y-6">
+            {/* Photos */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="font-medium flex items-center">
+                  <ImageIcon className="w-4 h-4 mr-2 text-zinc-400" /> Photos
+                </p>
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingMedia || (profile.photos && profile.photos.length >= 6)}
+                  className="text-xs bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Add Photo
+                </button>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  ref={fileInputRef} 
+                  onChange={handlePhotoUpload} 
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {profile.photos && profile.photos.map((url: string, idx: number) => (
+                  <div key={idx} className="relative aspect-[3/4] rounded-lg overflow-hidden group">
+                    <img src={url} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                    <button 
+                      onClick={() => handleRemovePhoto(idx)}
+                      className="absolute top-1 right-1 p-1 bg-black/50 hover:bg-black/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-3 h-3 text-white" />
+                    </button>
+                  </div>
+                ))}
+                {(!profile.photos || profile.photos.length === 0) && (
+                  <div className="col-span-3 py-8 text-center border-2 border-dashed border-zinc-800 rounded-lg">
+                    <p className="text-sm text-zinc-500">No additional photos uploaded.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Video */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="font-medium flex items-center">
+                  <Video className="w-4 h-4 mr-2 text-zinc-400" /> Video Snippet
+                </p>
+                {!profile.videoURL && (
+                  <button 
+                    onClick={() => videoInputRef.current?.click()}
+                    disabled={uploadingMedia}
+                    className="text-xs bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    Add Video
+                  </button>
+                )}
+                <input 
+                  type="file" 
+                  accept="video/*" 
+                  className="hidden" 
+                  ref={videoInputRef} 
+                  onChange={handleVideoUpload} 
+                />
+              </div>
+              {profile.videoURL ? (
+                <div className="relative aspect-video rounded-lg overflow-hidden group">
+                  <video src={profile.videoURL} controls className="w-full h-full object-cover" />
+                  <button 
+                    onClick={handleRemoveVideo}
+                    className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-4 h-4 text-white" />
+                  </button>
+                </div>
+              ) : (
+                <div className="py-8 text-center border-2 border-dashed border-zinc-800 rounded-lg">
+                  <p className="text-sm text-zinc-500">No video snippet uploaded.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* Pro Features */}
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 space-y-6">
-          <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">Pro Features</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">Pro Features</h3>
+            {!isPremium && <span className="text-xs bg-rose-500/20 text-rose-500 px-2 py-1 rounded font-bold">PULSE+</span>}
+          </div>
+
+          {/* Boost */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="p-2 bg-zinc-800 rounded-lg mr-3">
+                <Zap className="w-5 h-5 text-amber-500" />
+              </div>
+              <div>
+                <p className="font-medium flex items-center">
+                  Boost Profile
+                  {profile.boostExpiresAt && profile.boostExpiresAt > Date.now() && (
+                    <span className="ml-2 text-xs bg-amber-500/20 text-amber-500 px-2 py-0.5 rounded-full">Active</span>
+                  )}
+                </p>
+                <p className="text-xs text-zinc-500">Get seen by more guys for 30 mins</p>
+              </div>
+            </div>
+            <button 
+              onClick={handleBoost}
+              disabled={profile.boostExpiresAt && profile.boostExpiresAt > Date.now()}
+              className="px-4 py-2 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              Boost
+            </button>
+          </div>
           
           {/* Ghost Mode */}
           <div className="flex items-center justify-between">
@@ -312,6 +802,23 @@ export default function Profile() {
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input type="checkbox" className="sr-only peer" checked={isGhostMode} onChange={handleToggleGhostMode} />
+              <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+            </label>
+          </div>
+
+          {/* Incognito Mode */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="p-2 bg-zinc-800 rounded-lg mr-3">
+                <Eye className="w-5 h-5 text-zinc-400" />
+              </div>
+              <div>
+                <p className="font-medium">Incognito Browsing</p>
+                <p className="text-xs text-zinc-500">View profiles without leaving a trace</p>
+              </div>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" className="sr-only peer" checked={incognitoMode} onChange={handleToggleIncognitoMode} />
               <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
             </label>
           </div>
@@ -377,6 +884,64 @@ export default function Profile() {
                 Teleport
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Viewers & Taps */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Who Viewed Me */}
+          <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider flex items-center">
+                <Eye className="w-4 h-4 mr-2" /> Who Viewed Me
+              </h3>
+              {!isPremium && <span className="text-xs bg-rose-500/20 text-rose-500 px-2 py-1 rounded font-bold">PULSE+</span>}
+            </div>
+            
+            {viewers.length === 0 ? (
+              <p className="text-zinc-500 text-sm text-center py-4">No recent views.</p>
+            ) : (
+              <div className="space-y-3">
+                {viewers.map((v, idx) => (
+                  <div key={`viewer-${v.id}-${idx}`} className="flex items-center justify-between p-2 rounded-xl hover:bg-zinc-800 transition-colors cursor-pointer">
+                    <div className="flex items-center">
+                      <img src={v.profile.photoURL} alt={v.profile.displayName} className={`w-10 h-10 rounded-full object-cover mr-3 ${!isPremium ? 'blur-sm' : ''}`} />
+                      <div>
+                        <p className="font-medium text-white">{isPremium ? v.profile.displayName : 'Hidden'}</p>
+                        <p className="text-xs text-zinc-500">{new Date(v.viewedAt).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Taps */}
+          <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider flex items-center">
+                <Dog className="w-4 h-4 mr-2" /> Taps Received
+              </h3>
+            </div>
+            
+            {taps.length === 0 ? (
+              <p className="text-zinc-500 text-sm text-center py-4">No recent taps.</p>
+            ) : (
+              <div className="space-y-3">
+                {taps.map((t, idx) => (
+                  <div key={`tap-${t.id}-${idx}`} className="flex items-center justify-between p-2 rounded-xl hover:bg-zinc-800 transition-colors cursor-pointer">
+                    <div className="flex items-center">
+                      <img src={t.profile.photoURL} alt={t.profile.displayName} className="w-10 h-10 rounded-full object-cover mr-3" />
+                      <div>
+                        <p className="font-medium text-white">{t.profile.displayName}</p>
+                        <p className="text-xs text-zinc-500">Sent a {t.type} • {new Date(t.sentAt).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
