@@ -3,11 +3,12 @@ import React, { useEffect, useState } from 'react';
 import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { CalendarDays, MapPin, Plus, Users, X, Loader2 } from 'lucide-react';
+import { CalendarDays, MapPin, Plus, Users, X, Loader2, MessageCircle } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { formatDistanceToNow } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
 
 // Fix leaflet icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -30,6 +31,7 @@ interface Event {
 
 export default function Events() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [events, setEvents] = useState<Event[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [showCreate, setShowCreate] = useState(false);
@@ -159,17 +161,27 @@ export default function Events() {
                         </span>
                       </div>
                     </div>
-                    <button
-                      onClick={() => !isAttending && handleRSVP(event.id)}
-                      disabled={isAttending}
-                      className={`ml-4 px-4 py-2 rounded-xl text-sm font-medium transition-colors flex-shrink-0 ${
-                        isAttending
-                          ? 'bg-green-500/20 text-green-500 cursor-default'
-                          : 'bg-rose-600 hover:bg-rose-700 text-white'
-                      }`}
-                    >
-                      {isAttending ? '✓ Going' : 'RSVP'}
-                    </button>
+                    <div className="ml-4 flex flex-col space-y-2 flex-shrink-0">
+                      <button
+                        onClick={() => !isAttending && handleRSVP(event.id)}
+                        disabled={isAttending}
+                        className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                          isAttending
+                            ? 'bg-green-500/20 text-green-500 cursor-default'
+                            : 'bg-rose-600 hover:bg-rose-700 text-white'
+                        }`}
+                      >
+                        {isAttending ? '✓ Going' : 'RSVP'}
+                      </button>
+                      {isAttending && (
+                        <button
+                          onClick={() => navigate(`/event-chat/${event.id}`)}
+                          className="flex items-center justify-center px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm font-medium transition-colors"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> Chat
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

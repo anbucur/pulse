@@ -1,5 +1,7 @@
+/// <reference types="vite/client" />
 import { getToken } from 'firebase/messaging';
 import { doc, updateDoc } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { db, getMessagingInstance } from '../firebase';
 
 export const registerFCMToken = async (uid: string) => {
@@ -8,13 +10,14 @@ export const registerFCMToken = async (uid: string) => {
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      const token = await getToken(messaging, {
-        vapidKey: process.env.VITE_FCM_VAPID_KEY || 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeZ1vvk0n5CGsqI2yZ-5Hbg0vw19sZaO0QCPqcVcg-vtM01NdF8s'
-      });
+      const vapidKey = import.meta.env.VITE_FCM_VAPID_KEY;
+      if (!vapidKey) {
+        console.warn('VITE_FCM_VAPID_KEY is not set — push notifications disabled');
+        return;
+      }
+      const token = await getToken(messaging, { vapidKey });
       if (token) {
-        await updateDoc(doc(db, 'users', uid), {
-          fcmToken: token
-        });
+        await updateDoc(doc(db, 'users', uid), { fcmToken: token });
       }
     }
   } catch (error) {
@@ -22,17 +25,21 @@ export const registerFCMToken = async (uid: string) => {
   }
 };
 
-export const sendNotification = async (toUid: string, title: string, body: string, data?: any) => {
+export const sendNotification = async (toUid: string, title: string, body: string, data?: Record<string, string>) => {
   try {
-    const response = await fetch('/api/notify', {
+    const auth = getAuth();
+    const idToken = await auth.currentUser?.getIdToken();
+    if (!idToken) return;
+
+    await fetch('/api/notify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+      },
       body: JSON.stringify({ toUid, title, body, data }),
     });
-    if (!response.ok) {
-      console.log(`[STUB NOTIFICATION] To: ${toUid} | Title: ${title} | Body: ${body}`);
-    }
   } catch (error) {
-    console.log(`[STUB NOTIFICATION] To: ${toUid} | Title: ${title} | Body: ${body}`);
+    console.error('Error sending notification:', error);
   }
 };
