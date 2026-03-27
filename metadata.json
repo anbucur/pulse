@@ -1,0 +1,5 @@
+{
+  "name": "Pulse",
+  "description": "An intent-driven geosocial networking app for gay, bi, trans, and queer men, featuring AI-powered semantic matching.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"]
+}

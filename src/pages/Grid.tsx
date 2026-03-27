@@ -1,0 +1,613 @@
+/// <reference types="vite/client" />
+import React, { useEffect, useState } from 'react';
+import { collection, query, onSnapshot, where, getDocs, addDoc, serverTimestamp, updateDoc, doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
+import { Search, Zap, MapPin, Filter, MessageCircle, Map as MapIcon, Grid as GridIcon, X, Sparkles, Radio, Flame, ShieldCheck } from 'lucide-react';
+import { GoogleGenAI } from '@google/genai';
+import { useNavigate } from 'react-router-dom';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+import 'leaflet.heat';
+
+// Fix leaflet icons
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+interface Profile {
+  uid: string;
+  displayName: string;
+  photoURL: string;
+  age: number;
+  height: number;
+  weight: number;
+  sexualRole: string;
+  intent: string;
+  bio: string;
+  lat: number;
+  lng: number;
+  livePulseExpiresAt?: number;
+  lastActive: number;
+  isGhostMode?: boolean;
+  broadcast?: string;
+  broadcastExpiresAt?: number;
+  isVerified?: boolean;
+}
+
+function HeatmapLayer({ points }: { points: [number, number, number][] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map) return;
+    
+    // @ts-ignore - leaflet.heat adds heatLayer to L
+    const heat = L.heatLayer(points, {
+      radius: 25,
+      blur: 15,
+      maxZoom: 15,
+      gradient: {
+        0.4: '#3b82f6', // blue
+        0.6: '#8b5cf6', // purple
+        0.8: '#f43f5e', // rose
+        1.0: '#fbbf24'  // amber
+      }
+    }).addTo(map);
+
+    return () => {
+      map.removeLayer(heat);
+    };
+  }, [map, points]);
+
+  return null;
+}
+
+export default function Grid() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [livePulseActive, setLivePulseActive] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
+  const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
+  const [vibeMatch, setVibeMatch] = useState<{ score: number, reason: string } | null>(null);
+  const [calculatingVibe, setCalculatingVibe] = useState(false);
+  const [myProfile, setMyProfile] = useState<Profile | null>(null);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [intentFilter, setIntentFilter] = useState<string | null>(null);
+
+  const seedDemoProfiles = async () => {
+    if (!myProfile) return;
+    const demoProfiles = [
+      {
+        uid: 'demo_1',
+        displayName: 'Alex',
+        photoURL: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&q=80&w=400',
+        age: 28,
+        height: 180,
+        weight: 75,
+        sexualRole: 'Versatile',
+        intent: 'Dates',
+        bio: 'Looking for someone to explore the city with.',
+        lat: myProfile.lat + 0.01,
+        lng: myProfile.lng + 0.01,
+        lastActive: Date.now(),
+        isVerified: true
+      },
+      {
+        uid: 'demo_2',
+        displayName: 'Sam',
+        photoURL: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=400',
+        age: 32,
+        height: 185,
+        weight: 82,
+        sexualRole: 'Top',
+        intent: 'Right Now',
+        bio: 'Hosting in downtown. Let me know if you are around.',
+        lat: myProfile.lat - 0.01,
+        lng: myProfile.lng - 0.01,
+        livePulseExpiresAt: Date.now() + 3600000,
+        lastActive: Date.now(),
+        isVerified: true
+      },
+      {
+        uid: 'demo_3',
+        displayName: 'Jordan',
+        photoURL: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=400',
+        age: 25,
+        height: 175,
+        weight: 70,
+        sexualRole: 'Bottom',
+        intent: 'Chat',
+        bio: 'Just looking to chat and see where things go.',
+        lat: myProfile.lat + 0.02,
+        lng: myProfile.lng - 0.01,
+        lastActive: Date.now()
+      }
+    ];
+
+    for (const profile of demoProfiles) {
+      await setDoc(doc(db, 'public_profiles', profile.uid), profile);
+    }
+  };
+
+  useEffect(() => {
+    if (!user) return;
+
+    // Fetch own profile for Vibe Match
+    getDoc(doc(db, 'public_profiles', user.uid)).then(snap => {
+      if (snap.exists()) setMyProfile(snap.data() as Profile);
+    });
+
+    // Fetch all active profiles for MVP
+    const q = query(collection(db, 'public_profiles'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetchedProfiles: Profile[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data() as Profile;
+        if (doc.id !== user.uid && !data.isGhostMode) {
+          fetchedProfiles.push(data);
+        }
+      });
+      
+      // Sort: Live Pulse first, then by distance (mocked distance for now)
+      fetchedProfiles.sort((a, b) => {
+        const aLive = a.livePulseExpiresAt && a.livePulseExpiresAt > Date.now() ? 1 : 0;
+        const bLive = b.livePulseExpiresAt && b.livePulseExpiresAt > Date.now() ? 1 : 0;
+        return bLive - aLive;
+      });
+
+      setProfiles(fetchedProfiles);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  const handleSemanticSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    
+    setIsSearching(true);
+    try {
+      // Use Gemini to parse the query and filter profiles
+      const profileData = JSON.stringify(profiles.map(p => ({
+        uid: p.uid,
+        age: p.age,
+        role: p.sexualRole,
+        intent: p.intent,
+        bio: p.bio,
+        isLive: p.livePulseExpiresAt && p.livePulseExpiresAt > Date.now()
+      })));
+
+      const prompt = `
+        You are an AI matchmaking assistant for a dating app.
+        User query: "${searchQuery}"
+        
+        Available profiles:
+        ${profileData}
+        
+        Return a JSON array of 'uid' strings that best match the query. Only return the JSON array, no markdown formatting.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      const matchedUids = JSON.parse(response.text || "[]");
+      
+      // Reorder profiles to put matched ones at the top
+      setProfiles(prev => {
+        const matched = prev.filter(p => matchedUids.includes(p.uid));
+        const unmatched = prev.filter(p => !matchedUids.includes(p.uid));
+        return [...matched, ...unmatched];
+      });
+
+    } catch (error) {
+      console.error("Error during semantic search", error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const calculateVibeMatch = async (otherProfile: Profile) => {
+    if (!myProfile) return;
+    setCalculatingVibe(true);
+    setVibeMatch(null);
+    try {
+      const prompt = `
+        Analyze these two dating profiles and calculate a "Vibe Match" score from 1 to 100.
+        Provide a 1-sentence explanation of why they match or don't match.
+        
+        User 1 (Me):
+        Intent: ${myProfile.intent}
+        Role: ${myProfile.sexualRole}
+        Bio: ${myProfile.bio || 'None'}
+        
+        User 2 (Them):
+        Intent: ${otherProfile.intent}
+        Role: ${otherProfile.sexualRole}
+        Bio: ${otherProfile.bio || 'None'}
+        
+        Return JSON format: {"score": 85, "reason": "You both want to grab drinks right now and love techno."}
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+
+      setVibeMatch(JSON.parse(response.text || '{"score": 50, "reason": "Could be a match!"}'));
+    } catch (error) {
+      console.error("Error calculating vibe match", error);
+    } finally {
+      setCalculatingVibe(false);
+    }
+  };
+
+  const openProfile = (profile: Profile) => {
+    setSelectedProfile(profile);
+    calculateVibeMatch(profile);
+  };
+
+  const startChat = async (otherUid: string) => {
+    if (!user) return;
+    
+    // Check if chat already exists
+    const q = query(
+      collection(db, 'chats'),
+      where('participants', 'array-contains', user.uid)
+    );
+    
+    const snapshot = await getDocs(q);
+    let existingChatId = null;
+    
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      if (data.participants.includes(otherUid)) {
+        existingChatId = doc.id;
+      }
+    });
+
+    if (existingChatId) {
+      navigate(`/chat/${existingChatId}`);
+    } else {
+      // Create new chat
+      const newChatRef = await addDoc(collection(db, 'chats'), {
+        participants: [user.uid, otherUid],
+        updatedAt: Date.now(),
+        lastMessage: ""
+      });
+      navigate(`/chat/${newChatRef.id}`);
+    }
+  };
+
+  const toggleLivePulse = async () => {
+    if (!user) return;
+    const newStatus = !livePulseActive;
+    setLivePulseActive(newStatus);
+    
+    try {
+      await updateDoc(doc(db, 'public_profiles', user.uid), {
+        livePulseExpiresAt: newStatus ? Date.now() + 60 * 60 * 1000 : null // 1 hour from now
+      });
+    } catch (error) {
+      console.error("Error updating Live Pulse status", error);
+      setLivePulseActive(!newStatus); // Revert on error
+    }
+  };
+
+  useEffect(() => {
+    if (!user) return;
+    // Check own live pulse status
+    const checkOwnStatus = async () => {
+      const docSnap = await getDoc(doc(db, 'public_profiles', user.uid));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.livePulseExpiresAt && data.livePulseExpiresAt > Date.now()) {
+          setLivePulseActive(true);
+        }
+      }
+    };
+    checkOwnStatus();
+  }, [user]);
+
+  const filteredProfiles = profiles.filter(p => !intentFilter || p.intent === intentFilter);
+  const activeBroadcasts = filteredProfiles.filter(p => p.broadcast && p.broadcastExpiresAt && p.broadcastExpiresAt > Date.now());
+
+  return (
+    <div className="flex flex-col min-h-screen bg-zinc-950">
+      {/* Header & Search */}
+      <div className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800 p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-bold text-white tracking-tight">Pulse</h1>
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={() => setViewMode(viewMode === 'grid' ? 'map' : 'grid')}
+              className="p-2 rounded-full bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+            >
+              {viewMode === 'grid' ? <MapIcon className="w-5 h-5" /> : <GridIcon className="w-5 h-5" />}
+            </button>
+            <button 
+              onClick={toggleLivePulse}
+              className={`p-2 rounded-full transition-colors ${livePulseActive ? 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.5)]' : 'bg-zinc-800 text-zinc-400'}`}
+            >
+              <Zap className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSemanticSearch} className="relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Search className="h-5 w-5 text-zinc-500" />
+          </div>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="block w-full pl-10 pr-10 py-3 border border-zinc-800 rounded-full leading-5 bg-zinc-900 text-zinc-300 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-rose-500 focus:border-rose-500 sm:text-sm transition-all"
+            placeholder="e.g. Muscular guys hosting right now..."
+          />
+          <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+            {isSearching ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-rose-500"></div>
+            ) : (
+              <Filter className="h-5 w-5 text-zinc-500" />
+            )}
+          </div>
+        </form>
+
+        {/* Intent Filters */}
+        <div className="flex overflow-x-auto gap-2 mt-4 pb-1 scrollbar-hide">
+          {['All', 'Dates', 'Networking', 'Chat', 'Right Now'].map(intent => (
+            <button
+              key={intent}
+              onClick={() => setIntentFilter(intent === 'All' ? null : intent)}
+              className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                (intent === 'All' && !intentFilter) || intent === intentFilter
+                  ? 'bg-rose-500 text-white'
+                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+              }`}
+            >
+              {intent}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Broadcasts */}
+      {viewMode === 'grid' && activeBroadcasts.length > 0 && (
+        <div className="px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 overflow-x-auto whitespace-nowrap scrollbar-hide">
+          <div className="flex space-x-3">
+            {activeBroadcasts.map(p => (
+              <div key={`broadcast-${p.uid}`} onClick={() => openProfile(p)} className="inline-flex items-center bg-zinc-800 rounded-full px-3 py-1.5 cursor-pointer hover:bg-zinc-700 transition-colors">
+                <img src={p.photoURL} alt="" className="w-6 h-6 rounded-full mr-2 object-cover" />
+                <span className="text-sm text-white font-medium mr-2">{p.displayName}</span>
+                <span className="text-sm text-zinc-400 truncate max-w-[200px]">{p.broadcast}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Content Area */}
+      {viewMode === 'grid' ? (
+        <div className="p-2 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+          {filteredProfiles.map((profile) => {
+            const isLive = profile.livePulseExpiresAt && profile.livePulseExpiresAt > Date.now();
+            return (
+              <div 
+                key={profile.uid} 
+                onClick={() => openProfile(profile)}
+                className="relative aspect-[3/4] rounded-xl overflow-hidden group cursor-pointer bg-zinc-900"
+              >
+                <img 
+                  src={profile.photoURL} 
+                  alt={profile.displayName}
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  referrerPolicy="no-referrer"
+                />
+                
+                {/* Live Pulse Halo */}
+                {isLive && (
+                  <div className="absolute inset-0 border-2 border-rose-500 rounded-xl shadow-[inset_0_0_20px_rgba(244,63,94,0.3)] pointer-events-none"></div>
+                )}
+
+                {/* Gradient Overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+
+                {/* Info */}
+                <div className="absolute bottom-0 left-0 right-0 p-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-white font-bold text-lg leading-tight flex items-center">
+                      {profile.displayName}, {profile.age}
+                      {profile.isVerified && <ShieldCheck className="w-4 h-4 text-blue-500 ml-1" title="Verified" />}
+                    </h3>
+                    {isLive && <Zap className="w-4 h-4 text-rose-500 fill-rose-500" />}
+                  </div>
+                  <div className="flex items-center text-zinc-300 text-xs mt-1 space-x-2">
+                    <span className="flex items-center"><MapPin className="w-3 h-3 mr-0.5" /> 1.2m</span>
+                    <span>•</span>
+                    <span>{profile.sexualRole}</span>
+                  </div>
+                  <div className="mt-2 flex justify-between items-center">
+                    <div className="inline-block px-2 py-1 bg-white/10 backdrop-blur-sm rounded text-[10px] font-medium text-white uppercase tracking-wider">
+                      {profile.intent}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex-1 relative z-0">
+          <div className="absolute top-4 right-4 z-[1000]">
+            <button
+              onClick={() => setShowHeatmap(!showHeatmap)}
+              className={`p-3 rounded-full shadow-lg flex items-center justify-center transition-colors ${showHeatmap ? 'bg-rose-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+              title="Toggle Heatmap"
+            >
+              <Flame className="w-5 h-5" />
+            </button>
+          </div>
+          {myProfile && (
+            <MapContainer 
+              center={[myProfile.lat || 37.7749, myProfile.lng || -122.4194]} 
+              zoom={13} 
+              style={{ height: '100%', width: '100%', minHeight: '400px' }}
+              className="z-0"
+            >
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+              />
+              {showHeatmap ? (
+                <HeatmapLayer 
+                  points={filteredProfiles.map(p => [
+                    p.lat, 
+                    p.lng, 
+                    p.livePulseExpiresAt && p.livePulseExpiresAt > Date.now() ? 1 : 0.5
+                  ])} 
+                />
+              ) : (
+                filteredProfiles.map(p => {
+                  const isLive = p.livePulseExpiresAt && p.livePulseExpiresAt > Date.now();
+                  return (
+                    <Circle
+                      key={`map-${p.uid}`}
+                      center={[p.lat, p.lng]}
+                      radius={isLive ? 400 : 200}
+                      pathOptions={{
+                        color: isLive ? '#f43f5e' : '#3b82f6',
+                        fillColor: isLive ? '#f43f5e' : '#3b82f6',
+                        fillOpacity: isLive ? 0.4 : 0.2,
+                        weight: 0
+                      }}
+                      eventHandlers={{
+                        click: () => openProfile(p)
+                      }}
+                    />
+                  );
+                })
+              )}
+            </MapContainer>
+          )}
+        </div>
+      )}
+      
+      {filteredProfiles.length === 0 && viewMode === 'grid' && (
+        <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 p-8 text-center">
+          <Zap className="w-12 h-12 mb-4 opacity-20" />
+          <p>No profiles found nearby.</p>
+          <p className="text-sm mt-2 mb-6">Try expanding your search or check back later.</p>
+          <button 
+            onClick={seedDemoProfiles}
+            className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-full font-medium transition-colors"
+          >
+            Load Demo Profiles
+          </button>
+        </div>
+      )}
+
+      {/* Profile Modal */}
+      {selectedProfile && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <button 
+              onClick={() => setSelectedProfile(null)}
+              className="absolute top-4 right-4 z-10 p-2 bg-black/50 rounded-full text-white hover:bg-black/70 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <div className="relative h-96">
+              <img src={selectedProfile.photoURL} alt={selectedProfile.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/20 to-transparent"></div>
+              <div className="absolute bottom-0 left-0 right-0 p-6">
+                <h2 className="text-3xl font-bold text-white flex items-center">
+                  {selectedProfile.displayName}, {selectedProfile.age}
+                  {selectedProfile.isVerified && <ShieldCheck className="w-6 h-6 text-blue-500 ml-2" title="Verified" />}
+                  {selectedProfile.livePulseExpiresAt && selectedProfile.livePulseExpiresAt > Date.now() && (
+                    <Zap className="w-5 h-5 text-rose-500 fill-rose-500 ml-2" />
+                  )}
+                </h2>
+                <p className="text-zinc-300 mt-1">{selectedProfile.sexualRole} • {selectedProfile.height}cm • {selectedProfile.weight}kg</p>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Vibe Match */}
+              <div className="bg-zinc-800/50 rounded-2xl p-4 border border-zinc-700/50">
+                <div className="flex items-center mb-2">
+                  <Sparkles className="w-5 h-5 text-rose-500 mr-2" />
+                  <h3 className="font-semibold text-white">AI Vibe Match</h3>
+                </div>
+                {calculatingVibe ? (
+                  <div className="flex items-center text-zinc-400 text-sm">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-rose-500 mr-2"></div>
+                    Analyzing compatibility...
+                  </div>
+                ) : vibeMatch ? (
+                  <div>
+                    <div className="flex items-center mb-2">
+                      <div className="flex-1 bg-zinc-700 rounded-full h-2 overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-rose-500 to-orange-500" 
+                          style={{ width: `${vibeMatch.score}%` }}
+                        ></div>
+                      </div>
+                      <span className="ml-3 font-bold text-white">{vibeMatch.score}%</span>
+                    </div>
+                    <p className="text-sm text-zinc-300">{vibeMatch.reason}</p>
+                  </div>
+                ) : null}
+              </div>
+
+              {selectedProfile.broadcast && selectedProfile.broadcastExpiresAt && selectedProfile.broadcastExpiresAt > Date.now() && (
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4">
+                  <div className="flex items-center text-rose-500 mb-1">
+                    <Radio className="w-4 h-4 mr-2" />
+                    <span className="text-xs font-bold uppercase tracking-wider">Looking For</span>
+                  </div>
+                  <p className="text-white text-sm">{selectedProfile.broadcast}</p>
+                </div>
+              )}
+
+              <div>
+                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Intent</h3>
+                <div className="inline-block px-3 py-1 bg-zinc-800 text-white rounded-lg text-sm">
+                  {selectedProfile.intent}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">About</h3>
+                <p className="text-zinc-300 text-sm leading-relaxed">{selectedProfile.bio || "No bio provided."}</p>
+              </div>
+
+              <button 
+                onClick={() => startChat(selectedProfile.uid)}
+                className="w-full flex items-center justify-center px-6 py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-full font-bold text-lg transition-colors shadow-lg shadow-rose-500/20"
+              >
+                <MessageCircle className="w-6 h-6 mr-2" />
+                Start Chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
