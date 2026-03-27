@@ -57,23 +57,25 @@ service cloud.firestore {
     }
 
     function isValidChat(data) {
-      return hasOnlyAllowedFields(['participants', 'lastMessage', 'updatedAt', 'unreadCount', 'typing']) &&
+      return hasOnlyAllowedFields(['participants', 'lastMessage', 'updatedAt', 'unreadCount', 'typing', 'disappearAfter']) &&
              data.participants is list && data.participants.size() == 2 &&
              data.participants[0] is string && data.participants[1] is string &&
              data.updatedAt is number &&
              (!('lastMessage' in data) || (data.lastMessage is string && data.lastMessage.size() <= 1000)) &&
              (!('unreadCount' in data) || data.unreadCount is map) &&
-             (!('typing' in data) || data.typing is map);
+             (!('typing' in data) || data.typing is map) &&
+             (!('disappearAfter' in data) || data.disappearAfter == null || data.disappearAfter is number);
     }
 
     function isValidMessage(data) {
-      return hasOnlyAllowedFields(['senderId', 'text', 'timestamp', 'isRead', 'mediaUrl', 'isNSFW', 'isViewOnce', 'viewedAt', 'audioUrl']) &&
+      return hasOnlyAllowedFields(['senderId', 'text', 'timestamp', 'isRead', 'mediaUrl', 'isNSFW', 'isViewOnce', 'viewedAt', 'audioUrl', 'mediaType']) &&
              data.senderId is string &&
              data.timestamp is number &&
              data.isRead is bool &&
              (!('text' in data) || (data.text is string && data.text.size() <= 1000)) &&
              (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() <= 500)) &&
              (!('audioUrl' in data) || (data.audioUrl is string && data.audioUrl.size() <= 500)) &&
+             (!('mediaType' in data) || (data.mediaType is string)) &&
              (!('isNSFW' in data) || data.isNSFW is bool) &&
              (!('isViewOnce' in data) || data.isViewOnce is bool) &&
              (!('viewedAt' in data) || data.viewedAt == null || data.viewedAt is number);

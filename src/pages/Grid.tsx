@@ -1,11 +1,13 @@
 /// <reference types="vite/client" />
 import React, { useEffect, useState } from 'react';
-import { collection, query, onSnapshot, where, getDocs, addDoc, serverTimestamp, updateDoc, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, where, getDocs, addDoc, serverTimestamp, updateDoc, doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Search, Zap, MapPin, Filter, MessageCircle, Map as MapIcon, Grid as GridIcon, X, Sparkles, Radio, Flame, ShieldCheck, Heart, ThumbsUp, Dog, Ban, AlertTriangle } from 'lucide-react';
+import { Search, Zap, MapPin, Filter, MessageCircle, Map as MapIcon, Grid as GridIcon, X, Sparkles, Radio, Flame, ShieldCheck, Heart, ThumbsUp, Dog, Ban, AlertTriangle, PlusCircle, Crown } from 'lucide-react';
+import { sendNotification } from '../lib/notifications';
 import { GoogleGenAI } from '@google/genai';
 import { useNavigate } from 'react-router-dom';
+import { uploadMedia } from '../lib/uploadMedia';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -97,6 +99,13 @@ export default function Grid() {
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [intentFilter, setIntentFilter] = useState<string | null>(null);
   const [selectedProfileAlbums, setSelectedProfileAlbums] = useState<any[]>([]);
+  const [stories, setStories] = useState<any[]>([]);
+  const [viewingStory, setViewingStory] = useState<any | null>(null);
+  const [showCreateStory, setShowCreateStory] = useState(false);
+  const [storyText, setStoryText] = useState('');
+  const [storyFile, setStoryFile] = useState<File | null>(null);
+  const [uploadingStory, setUploadingStory] = useState(false);
+  const [selectedPhotoIdx, setSelectedPhotoIdx] = useState(0);
 
   useEffect(() => {
     if (!user || !selectedProfile) {
@@ -221,10 +230,26 @@ export default function Grid() {
       setProfiles(fetchedProfiles);
     });
 
+    // Fetch stories (non-expired)
+    const storiesUnsub = onSnapshot(collection(db, 'stories'), async (snap) => {
+      const now = Date.now();
+      const activeStories = snap.docs
+        .map(d => ({ uid: d.id, ...d.data() }))
+        .filter((s: any) => s.expiresAt > now)
+        .sort((a: any, b: any) => b.createdAt - a.createdAt);
+      // Resolve profile names for story circles
+      const storiesWithProfiles = await Promise.all(activeStories.map(async (s: any) => {
+        const pSnap = await getDoc(doc(db, 'public_profiles', s.uid));
+        return { ...s, profile: pSnap.exists() ? pSnap.data() : null };
+      }));
+      setStories(storiesWithProfiles.filter((s: any) => s.profile));
+    });
+
     return () => {
       unsubscribe();
       favUnsub();
       likesUnsub();
+      storiesUnsub();
     };
   }, [user]);
 
@@ -316,6 +341,7 @@ export default function Grid() {
 
   const openProfile = async (profile: Profile) => {
     setSelectedProfile(profile);
+    setSelectedPhotoIdx(0);
     calculateVibeMatch(profile);
     
     // Record profile view
@@ -335,7 +361,7 @@ export default function Grid() {
     const isFav = favorites.includes(profileId);
     try {
       if (isFav) {
-        await setDoc(doc(db, `favorites/${user.uid}/items/${profileId}`), { deleted: true }); // deleteDoc alternative if we want soft delete, but let's use deleteDoc
+        await deleteDoc(doc(db, `favorites/${user.uid}/items/${profileId}`));
       } else {
         await setDoc(doc(db, `favorites/${user.uid}/items/${profileId}`), { addedAt: Date.now() });
       }
@@ -348,15 +374,16 @@ export default function Grid() {
     if (!user) return;
     const isLiked = likes.includes(profileId);
     try {
-      if (isLiked) {
-        // We don't delete likes usually, but for toggle we can
-        // await deleteDoc(doc(db, `likes/${user.uid}/sent/${profileId}`));
-      } else {
+      if (!isLiked) {
         await setDoc(doc(db, `likes/${user.uid}/sent/${profileId}`), { sentAt: Date.now() });
         // Check mutual match
         const mutualSnap = await getDoc(doc(db, `likes/${profileId}/sent/${user.uid}`));
         if (mutualSnap.exists()) {
-          alert("It's a mutual match!"); // In real app, use a toast
+          alert("It's a mutual match! 🎉");
+          sendNotification(profileId, "It's a match! 🎉", `You and ${myProfile?.displayName || 'someone'} liked each other!`);
+          sendNotification(user.uid, "It's a match! 🎉", "You have a new mutual match!");
+        } else {
+          sendNotification(profileId, "New Like ❤️", `${myProfile?.displayName || 'Someone'} liked your profile!`);
         }
       }
     } catch (e) {
@@ -369,9 +396,11 @@ export default function Grid() {
     try {
       await setDoc(doc(db, `taps/${profileId}/received/${user.uid}`), {
         sentAt: Date.now(),
+        emoji: 'woof',
         type: 'woof'
       });
-      alert("Woof sent!");
+      sendNotification(profileId, "Woof! 🐺", `${myProfile?.displayName || 'Someone'} woofed at you!`);
+      alert("Woof sent! 🐺");
     } catch (e) {
       console.error("Error sending tap", e);
     }
@@ -414,34 +443,41 @@ export default function Grid() {
 
   const startChat = async (otherUid: string) => {
     if (!user) return;
-    
+
     // Check if chat already exists
-    const q = query(
-      collection(db, 'chats'),
-      where('participants', 'array-contains', user.uid)
-    );
-    
-    const snapshot = await getDocs(q);
-    let existingChatId = null;
-    
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      if (data.participants.includes(otherUid)) {
-        existingChatId = doc.id;
-      }
+    const chatsSnap = await getDocs(query(collection(db, 'chats'), where('participants', 'array-contains', user.uid)));
+    let existingChatId: string | null = null;
+    chatsSnap.forEach((d) => {
+      if (d.data().participants.includes(otherUid)) existingChatId = d.id;
     });
 
     if (existingChatId) {
       navigate(`/chat/${existingChatId}`);
-    } else {
-      // Create new chat
-      const newChatRef = await addDoc(collection(db, 'chats'), {
-        participants: [user.uid, otherUid],
-        updatedAt: Date.now(),
-        lastMessage: ""
-      });
-      navigate(`/chat/${newChatRef.id}`);
+      return;
     }
+
+    // Check target's messagingPref
+    const targetProfile = profiles.find(p => p.uid === otherUid);
+    if (targetProfile?.messagingPref === 'manual') {
+      // Create a chat request instead
+      const chatId = [user.uid, otherUid].sort().join('_');
+      await setDoc(doc(db, 'chat_requests', chatId), {
+        from: user.uid,
+        to: otherUid,
+        status: 'pending',
+        createdAt: Date.now()
+      });
+      sendNotification(otherUid, "Chat Request 📬", `${myProfile?.displayName || 'Someone'} wants to chat with you!`);
+      alert("Chat request sent! They'll be notified.");
+      return;
+    }
+
+    const newChatRef = await addDoc(collection(db, 'chats'), {
+      participants: [user.uid, otherUid],
+      updatedAt: Date.now(),
+      lastMessage: ""
+    });
+    navigate(`/chat/${newChatRef.id}`);
   };
 
   const toggleLivePulse = async () => {
@@ -507,6 +543,32 @@ export default function Grid() {
     return 0;
   });
 
+  const handleCreateStory = async () => {
+    if (!user || (!storyFile && !storyText.trim())) return;
+    setUploadingStory(true);
+    try {
+      let photoURL = '';
+      if (storyFile) {
+        photoURL = await uploadMedia(storyFile, `stories/${user.uid}/${Date.now()}_${storyFile.name}`);
+      }
+      const now = Date.now();
+      await setDoc(doc(db, 'stories', user.uid), {
+        photoURL,
+        text: storyText.trim(),
+        createdAt: now,
+        expiresAt: now + 86400000 // 24h
+      });
+      setShowCreateStory(false);
+      setStoryText('');
+      setStoryFile(null);
+      alert('Story posted! It will disappear in 24 hours.');
+    } catch (e) {
+      console.error('Error creating story', e);
+    } finally {
+      setUploadingStory(false);
+    }
+  };
+
   const activeBroadcasts = filteredProfiles.filter(p => p.broadcast && p.broadcastExpiresAt && p.broadcastExpiresAt > Date.now());
 
   return (
@@ -571,6 +633,34 @@ export default function Grid() {
         </div>
       </div>
 
+      {/* Stories Row */}
+      {viewMode === 'grid' && (
+        <div className="px-4 py-3 border-b border-zinc-800 overflow-x-auto scrollbar-hide">
+          <div className="flex space-x-4">
+            {/* Create Story button */}
+            <button onClick={() => setShowCreateStory(true)} className="flex flex-col items-center space-y-1 flex-shrink-0">
+              <div className="w-14 h-14 rounded-full bg-zinc-800 border-2 border-dashed border-zinc-600 flex items-center justify-center hover:border-rose-500 transition-colors">
+                <PlusCircle className="w-6 h-6 text-zinc-400" />
+              </div>
+              <span className="text-[10px] text-zinc-400">Story</span>
+            </button>
+            {/* Story circles */}
+            {stories.map((s) => (
+              <button key={s.uid} onClick={() => setViewingStory(s)} className="flex flex-col items-center space-y-1 flex-shrink-0">
+                <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-rose-500 p-0.5">
+                  <img
+                    src={s.photoURL || s.profile.photoURL}
+                    alt={s.profile.displayName}
+                    className="w-full h-full rounded-full object-cover"
+                  />
+                </div>
+                <span className="text-[10px] text-zinc-400 truncate max-w-[56px]">{s.profile.displayName}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Broadcasts */}
       {viewMode === 'grid' && activeBroadcasts.length > 0 && (
         <div className="px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 overflow-x-auto whitespace-nowrap scrollbar-hide">
@@ -626,8 +716,8 @@ export default function Grid() {
                     </h3>
                     {isLive && <Zap className="w-4 h-4 text-rose-500 fill-rose-500" />}
                   </div>
-                  <div className="flex items-center text-zinc-300 text-xs mt-1 space-x-2">
-                    <span className="flex items-center"><MapPin className="w-3 h-3 mr-0.5" /> {distDisplay}</span>
+                  <div className="flex items-center text-zinc-300 text-xs mt-1 space-x-2 flex-wrap">
+                    <span className="flex items-center"><MapPin className="w-3 h-3 mr-0.5" /> {profile.travelCity || distDisplay}</span>
                     <span>•</span>
                     <span>{profile.sexualRole}</span>
                   </div>
@@ -722,18 +812,56 @@ export default function Grid() {
               <X className="w-5 h-5" />
             </button>
             
+            {/* Photo Carousel */}
             <div className="relative h-96">
-              <img src={selectedProfile.photoURL} alt={selectedProfile.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-              <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/20 to-transparent"></div>
+              {(() => {
+                const allPhotos = [
+                  selectedProfile.photoURL,
+                  ...(selectedProfile.photos || []).filter((u: string) => u !== selectedProfile.photoURL)
+                ].filter(Boolean);
+                const currentPhoto = allPhotos[selectedPhotoIdx] || selectedProfile.photoURL;
+                return (
+                  <>
+                    <img src={currentPhoto} alt={selectedProfile.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    {allPhotos.length > 1 && (
+                      <>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setSelectedPhotoIdx(i => Math.max(0, i - 1)); }}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 rounded-full text-white hover:bg-black/70"
+                        >‹</button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setSelectedPhotoIdx(i => Math.min(allPhotos.length - 1, i + 1)); }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 rounded-full text-white hover:bg-black/70"
+                        >›</button>
+                        <div className="absolute bottom-16 left-0 right-0 flex justify-center gap-1">
+                          {allPhotos.map((_: string, i: number) => (
+                            <button key={i} onClick={() => setSelectedPhotoIdx(i)} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === selectedPhotoIdx ? 'bg-white' : 'bg-white/40'}`} />
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+              <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/20 to-transparent pointer-events-none"></div>
               <div className="absolute bottom-0 left-0 right-0 p-6">
-                <h2 className="text-3xl font-bold text-white flex items-center">
+                <h2 className="text-3xl font-bold text-white flex items-center flex-wrap gap-2">
                   {selectedProfile.displayName}, {selectedProfile.age}
-                  {selectedProfile.isVerified && <ShieldCheck className="w-6 h-6 text-blue-500 ml-2" title="Verified" />}
+                  {selectedProfile.isVerified && <ShieldCheck className="w-6 h-6 text-blue-500" title="Verified" />}
                   {selectedProfile.livePulseExpiresAt && selectedProfile.livePulseExpiresAt > Date.now() && (
-                    <Zap className="w-5 h-5 text-rose-500 fill-rose-500 ml-2" />
+                    <Zap className="w-5 h-5 text-rose-500 fill-rose-500" />
+                  )}
+                  {selectedProfile.boostExpiresAt && selectedProfile.boostExpiresAt > Date.now() && (
+                    <Zap className="w-5 h-5 text-amber-500 fill-amber-500" />
                   )}
                 </h2>
-                <p className="text-zinc-300 mt-1">{selectedProfile.sexualRole} • {selectedProfile.height}cm • {selectedProfile.weight}kg</p>
+                <p className="text-zinc-300 mt-1">
+                  {selectedProfile.pronouns && <span className="mr-2">{selectedProfile.pronouns}</span>}
+                  {selectedProfile.sexualRole} • {selectedProfile.height}cm • {selectedProfile.weight}kg
+                </p>
+                {selectedProfile.travelCity && (
+                  <p className="text-xs text-amber-400 mt-1 flex items-center"><MapPin className="w-3 h-3 mr-1" />Traveling to {selectedProfile.travelCity}</p>
+                )}
               </div>
             </div>
 
@@ -1019,6 +1147,71 @@ export default function Grid() {
                 className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-medium transition-colors"
               >
                 Reset Filters
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Story Viewer Modal */}
+      {viewingStory && (
+        <div className="fixed inset-0 z-[60] bg-black flex flex-col items-center justify-center" onClick={() => setViewingStory(null)}>
+          <button onClick={() => setViewingStory(null)} className="absolute top-4 right-4 p-2 bg-black/50 rounded-full text-white">
+            <X className="w-6 h-6" />
+          </button>
+          <div className="w-full max-w-sm relative">
+            {viewingStory.photoURL ? (
+              <img src={viewingStory.photoURL} alt="Story" className="w-full rounded-2xl object-contain max-h-[70vh]" />
+            ) : (
+              <div className="w-full h-64 bg-gradient-to-br from-rose-500 to-purple-600 rounded-2xl flex items-center justify-center">
+                <p className="text-white text-xl font-bold text-center px-6">{viewingStory.text}</p>
+              </div>
+            )}
+            {viewingStory.text && viewingStory.photoURL && (
+              <p className="absolute bottom-4 left-0 right-0 text-center text-white font-medium drop-shadow-lg px-4">{viewingStory.text}</p>
+            )}
+            <div className="absolute top-4 left-4 flex items-center space-x-2">
+              <img src={viewingStory.profile.photoURL} alt="" className="w-8 h-8 rounded-full object-cover border border-white" />
+              <span className="text-white font-medium text-sm">{viewingStory.profile.displayName}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Story Modal */}
+      {showCreateStory && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 w-full max-w-sm rounded-3xl p-6 border border-zinc-800">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-white">Create Story</h3>
+              <button onClick={() => setShowCreateStory(false)} className="p-1.5 bg-zinc-800 rounded-full text-zinc-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <label className="cursor-pointer block">
+                <div className="w-full h-32 bg-zinc-800 rounded-xl border-2 border-dashed border-zinc-700 flex items-center justify-center hover:border-rose-500 transition-colors">
+                  {storyFile ? (
+                    <p className="text-sm text-zinc-300">{storyFile.name}</p>
+                  ) : (
+                    <p className="text-sm text-zinc-500">Tap to add photo</p>
+                  )}
+                </div>
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => setStoryFile(e.target.files?.[0] || null)} />
+              </label>
+              <textarea
+                placeholder="Add a caption... (optional)"
+                value={storyText}
+                onChange={(e) => setStoryText(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500 resize-none"
+                rows={3}
+              />
+              <button
+                onClick={handleCreateStory}
+                disabled={uploadingStory || (!storyFile && !storyText.trim())}
+                className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50 flex items-center justify-center"
+              >
+                {uploadingStory ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : 'Post Story (24h)'}
               </button>
             </div>
           </div>

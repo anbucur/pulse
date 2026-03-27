@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc, updateDoc, setDoc, deleteDoc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
-import { LogOut, Edit3, Settings, ShieldCheck, EyeOff, MapPin, Radio, Sparkles, Loader2, Camera, X, CheckCircle, Zap, Eye, Dog, Image as ImageIcon, Video } from 'lucide-react';
+import { LogOut, Edit3, Settings, ShieldCheck, EyeOff, MapPin, Radio, Sparkles, Loader2, Camera, X, CheckCircle, Zap, Eye, Dog, Image as ImageIcon, Video, Crown, Phone } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import Webcam from 'react-webcam';
 import { uploadMedia } from '../lib/uploadMedia';
@@ -23,6 +23,10 @@ export default function Profile() {
   const [viewers, setViewers] = useState<any[]>([]);
   const [taps, setTaps] = useState<any[]>([]);
   const [albums, setAlbums] = useState<any[]>([]);
+  const [showPulseUpgrade, setShowPulseUpgrade] = useState(false);
+  const [upgradingPulse, setUpgradingPulse] = useState(false);
+  const [show2FA, setShow2FA] = useState(false);
+  const [twoFAPhone, setTwoFAPhone] = useState('');
   const webcamRef = useRef<Webcam>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -220,12 +224,17 @@ export default function Profile() {
     const lat = parseFloat(travelLat);
     const lng = parseFloat(travelLng);
     if (isNaN(lat) || isNaN(lng)) return alert('Invalid coordinates');
-    
-    await updateDoc(doc(db, 'public_profiles', user.uid), {
-      lat,
-      lng
-    });
-    alert('Location updated!');
+
+    let travelCity = '';
+    try {
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+      const geoData = await geoRes.json();
+      travelCity = geoData.address?.city || geoData.address?.town || geoData.address?.state || '';
+    } catch (_) { /* ignore geocoding errors */ }
+
+    await updateDoc(doc(db, 'public_profiles', user.uid), { lat, lng, travelCity });
+    setProfile({ ...profile, lat, lng, travelCity });
+    alert(`Location updated!${travelCity ? ` Now showing as: ${travelCity}` : ''}`);
   };
 
   const handleOptimizeProfile = async () => {
@@ -291,9 +300,8 @@ export default function Profile() {
       const result = JSON.parse(response.text || '{"verified": false, "reason": "Failed to parse"}');
       
       if (result.verified) {
-        await updateDoc(doc(db, 'public_profiles', user.uid), {
-          isVerified: true
-        });
+        await updateDoc(doc(db, 'public_profiles', user.uid), { isVerified: true });
+        await updateDoc(doc(db, 'users', user.uid), { isVerified: true });
         setProfile({ ...profile, isVerified: true });
         alert('Profile verified successfully!');
       } else {
@@ -306,6 +314,25 @@ export default function Profile() {
       setVerifying(false);
     }
   }, [webcamRef, user, profile]);
+
+  const handleUpgradePulse = async () => {
+    if (!user) return;
+    setUpgradingPulse(true);
+    try {
+      const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
+      await updateDoc(doc(db, 'users', user.uid), {
+        isPremium: true,
+        premiumExpiresAt: expiresAt
+      });
+      alert('Welcome to Pulse+! Premium features are now unlocked.');
+      setShowPulseUpgrade(false);
+      window.location.reload();
+    } catch (e) {
+      console.error('Error upgrading to Pulse+', e);
+    } finally {
+      setUpgradingPulse(false);
+    }
+  };
 
   const seedDemoProfiles = async () => {
     if (!profile) return;
@@ -398,10 +425,12 @@ export default function Profile() {
               )}
             </div>
             <div>
-              <h1 className="text-3xl font-bold flex items-center">
+              <h1 className="text-3xl font-bold flex items-center gap-2">
                 {profile.displayName}, {profile.age}
+                {isPremium && <span className="text-xs bg-amber-500 text-black px-2 py-0.5 rounded-full font-bold flex items-center"><Crown className="w-3 h-3 mr-1" />Pulse+</span>}
               </h1>
-              <p className="text-zinc-400">{profile.sexualRole} • {profile.height}cm • {profile.weight}kg</p>
+              <p className="text-zinc-400">{profile.pronouns ? `${profile.pronouns} · ` : ''}{profile.sexualRole} • {profile.height}cm • {profile.weight}kg</p>
+              {incognitoMode && <p className="text-xs text-zinc-500 flex items-center mt-1"><EyeOff className="w-3 h-3 mr-1" />Incognito active</p>}
             </div>
           </div>
           <button className="p-3 bg-zinc-800 rounded-full hover:bg-zinc-700 transition-colors">
@@ -593,6 +622,23 @@ export default function Profile() {
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
           <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-4">Extended Stats</h3>
           <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="block text-xs text-zinc-500 mb-1">PrEP Status</label>
+              <select
+                value={profile.prepStatus || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setProfile({...profile, prepStatus: val});
+                  updateDoc(doc(db, 'public_profiles', user.uid), { prepStatus: val });
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
+              >
+                <option value="">Select...</option>
+                <option value="On PrEP">On PrEP</option>
+                <option value="Not on PrEP">Not on PrEP</option>
+                <option value="Prefer not to say">Prefer not to say</option>
+              </select>
+            </div>
             <div>
               <label className="block text-xs text-zinc-500 mb-1">Pronouns</label>
               <input 
@@ -945,9 +991,71 @@ export default function Profile() {
           </div>
         </div>
 
+        {/* Pulse+ Upgrade Banner */}
+        {!isPremium && (
+          <div className="bg-gradient-to-r from-amber-500/20 to-rose-500/20 border border-amber-500/30 rounded-2xl p-6">
+            <div className="flex items-center mb-3">
+              <Crown className="w-6 h-6 text-amber-500 mr-2" />
+              <h3 className="text-lg font-bold text-white">Upgrade to Pulse+</h3>
+            </div>
+            <ul className="text-sm text-zinc-300 space-y-1 mb-4">
+              <li>⚡ Boost profile visibility</li>
+              <li>👁️ See who viewed you (unblurred)</li>
+              <li>🌍 Travel / Teleport Mode</li>
+              <li>🕵️ Incognito browsing</li>
+              <li>🔍 Advanced filters</li>
+            </ul>
+            <button
+              onClick={() => setShowPulseUpgrade(true)}
+              className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl transition-colors"
+            >
+              Subscribe — $9.99/mo
+            </button>
+          </div>
+        )}
+
+        {/* 2FA Section */}
+        <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center">
+              <Phone className="w-5 h-5 text-zinc-400 mr-2" />
+              <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">Two-Factor Authentication</h3>
+            </div>
+          </div>
+          {show2FA ? (
+            <div className="space-y-3">
+              <input
+                type="tel"
+                placeholder="+1 (555) 000-0000"
+                value={twoFAPhone}
+                onChange={(e) => setTwoFAPhone(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
+              />
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => { alert('2FA enrollment requires Firebase phone auth setup with reCAPTCHA. Stub: 2FA enabled.'); setShow2FA(false); }}
+                  className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  Enable 2FA
+                </button>
+                <button onClick={() => setShow2FA(false)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShow2FA(true)}
+              className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Enable 2FA via Phone
+            </button>
+          )}
+        </div>
+
         {/* Settings & Logout */}
         <div className="space-y-2">
-          <button 
+          <button
             onClick={seedDemoProfiles}
             className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl border border-zinc-800 hover:bg-zinc-800 transition-colors"
           >
@@ -962,7 +1070,7 @@ export default function Profile() {
               <span>Settings</span>
             </div>
           </button>
-          <button 
+          <button
             onClick={logout}
             className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl border border-zinc-800 hover:bg-zinc-800 transition-colors text-red-500"
           >
@@ -973,6 +1081,42 @@ export default function Profile() {
           </button>
         </div>
       </div>
+
+      {/* Pulse+ Upgrade Modal */}
+      {showPulseUpgrade && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 w-full max-w-sm rounded-3xl p-8 border border-amber-500/30 shadow-2xl">
+            <div className="text-center mb-6">
+              <Crown className="w-12 h-12 text-amber-500 mx-auto mb-3" />
+              <h2 className="text-2xl font-bold text-white mb-1">Pulse+ Premium</h2>
+              <p className="text-zinc-400 text-sm">Unlock the full Pulse experience</p>
+            </div>
+            <ul className="space-y-3 mb-6 text-sm">
+              {[
+                ['⚡', 'Boost — appear at the top of the grid'],
+                ['👁️', 'See exactly who viewed your profile'],
+                ['🌍', 'Travel / Teleport anywhere in the world'],
+                ['🕵️', 'Incognito mode — browse without a trace'],
+                ['🔍', 'Unlimited advanced filters'],
+              ].map(([icon, text]) => (
+                <li key={text} className="flex items-center text-zinc-300">
+                  <span className="text-lg mr-3">{icon}</span> {text}
+                </li>
+              ))}
+            </ul>
+            <button
+              onClick={handleUpgradePulse}
+              disabled={upgradingPulse}
+              className="w-full py-4 bg-gradient-to-r from-amber-500 to-rose-500 hover:opacity-90 text-white font-bold rounded-2xl text-lg transition-opacity disabled:opacity-50 flex items-center justify-center"
+            >
+              {upgradingPulse ? <Loader2 className="animate-spin w-5 h-5" /> : 'Subscribe — $9.99/mo'}
+            </button>
+            <button onClick={() => setShowPulseUpgrade(false)} className="w-full mt-3 py-2 text-zinc-500 hover:text-zinc-300 text-sm transition-colors">
+              Maybe later
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Camera Modal for Verification */}
       {showCamera && (
