@@ -4,12 +4,16 @@ import { doc, getDoc, setDoc, collection, onSnapshot } from 'firebase/firestore'
 import { auth, db } from '../firebase';
 import { registerFCMToken } from '../lib/notifications';
 
+export type ProviderPlanId = 'free' | 'pulse_plus' | 'token_minimax' | 'token_anthropic' | 'coding_zai';
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   isVerified: boolean;
   hasProfile: boolean;
   isPremium: boolean;
+  plan: ProviderPlanId;
+  tokenBalance: number;
   blockedUsers: string[];
   signInWithGoogle: () => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<UserCredential>;
@@ -27,6 +31,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isVerified, setIsVerified] = useState(false);
   const [hasProfile, setHasProfile] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
+  const [plan, setPlan] = useState<ProviderPlanId>('free');
+  const [tokenBalance, setTokenBalance] = useState(0);
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
 
   const checkProfileStatus = async (uid: string) => {
@@ -36,6 +42,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = userDoc.data();
         setIsVerified(data.isVerified || false);
         setIsPremium(data.isPremium || false);
+        setPlan((data.plan as ProviderPlanId) || 'free');
+        setTokenBalance(data.tokenBalance ?? 0);
       } else {
         // Create base user doc if it doesn't exist
         await setDoc(doc(db, 'users', uid), {
@@ -43,10 +51,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: auth.currentUser?.email || '',
           role: 'user',
           isVerified: false,
-          isPremium: false
+          isPremium: false,
+          plan: 'free',
+          tokenBalance: 0,
+          tokenUsed: 0,
         });
         setIsVerified(false);
         setIsPremium(false);
+        setPlan('free');
+        setTokenBalance(0);
       }
 
       const profileDoc = await getDoc(doc(db, 'public_profiles', uid));
@@ -73,6 +86,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsVerified(false);
         setHasProfile(false);
         setIsPremium(false);
+        setPlan('free');
+        setTokenBalance(0);
         setBlockedUsers([]);
         if (blockedUnsub) blockedUnsub();
       }
@@ -131,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, isVerified, hasProfile, isPremium, blockedUsers, signInWithGoogle, signUpWithEmail, signInWithEmail, resetPassword, logout, checkProfileStatus }}>
+    <AuthContext.Provider value={{ user, loading, isVerified, hasProfile, isPremium, plan, tokenBalance, blockedUsers, signInWithGoogle, signUpWithEmail, signInWithEmail, resetPassword, logout, checkProfileStatus }}>
       {!loading && children}
     </AuthContext.Provider>
   );
