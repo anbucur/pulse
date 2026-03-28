@@ -23,7 +23,7 @@ service cloud.firestore {
     }
 
     function isValidPublicProfile(data) {
-      return hasOnlyAllowedFields(['uid', 'displayName', 'photoURL', 'photos', 'videoURL', 'age', 'height', 'weight', 'sexualRole', 'tribes', 'bio', 'tags', 'intent', 'lat', 'lng', 'livePulseExpiresAt', 'lastActive', 'isGhostMode', 'broadcast', 'broadcastExpiresAt', 'isVerified', 'hivStatus', 'lastTested', 'pronouns', 'relationship', 'bodyType', 'boostExpiresAt', 'incognitoMode', 'messagingPref', 'prepStatus', 'travelCity', 'moodColor', 'moodExpiresAt']) &&
+      return hasOnlyAllowedFields(['uid', 'displayName', 'photoURL', 'photos', 'videoURL', 'age', 'height', 'weight', 'sexualRole', 'tribes', 'bio', 'tags', 'intent', 'lat', 'lng', 'livePulseExpiresAt', 'lastActive', 'isGhostMode', 'broadcast', 'broadcastExpiresAt', 'isVerified', 'hivStatus', 'lastTested', 'pronouns', 'relationship', 'bodyType', 'boostExpiresAt', 'incognitoMode', 'messagingPref', 'prepStatus', 'travelCity']) &&
              data.uid is string && data.uid.size() > 0 &&
              data.displayName is string && data.displayName.size() <= 50 &&
              data.age is number && data.age >= 18 &&
@@ -53,31 +53,27 @@ service cloud.firestore {
              (!('incognitoMode' in data) || data.incognitoMode is bool) &&
              (!('messagingPref' in data) || data.messagingPref is string) &&
              (!('prepStatus' in data) || data.prepStatus is string) &&
-             (!('travelCity' in data) || data.travelCity is string) &&
-             (!('moodColor' in data) || data.moodColor == null || data.moodColor is string) &&
-             (!('moodExpiresAt' in data) || data.moodExpiresAt == null || data.moodExpiresAt is number);
+             (!('travelCity' in data) || data.travelCity is string);
     }
 
     function isValidChat(data) {
-      return hasOnlyAllowedFields(['participants', 'lastMessage', 'updatedAt', 'unreadCount', 'typing', 'disappearAfter']) &&
+      return hasOnlyAllowedFields(['participants', 'lastMessage', 'updatedAt', 'unreadCount', 'typing']) &&
              data.participants is list && data.participants.size() == 2 &&
              data.participants[0] is string && data.participants[1] is string &&
              data.updatedAt is number &&
              (!('lastMessage' in data) || (data.lastMessage is string && data.lastMessage.size() <= 1000)) &&
              (!('unreadCount' in data) || data.unreadCount is map) &&
-             (!('typing' in data) || data.typing is map) &&
-             (!('disappearAfter' in data) || data.disappearAfter == null || data.disappearAfter is number);
+             (!('typing' in data) || data.typing is map);
     }
 
     function isValidMessage(data) {
-      return hasOnlyAllowedFields(['senderId', 'text', 'timestamp', 'isRead', 'mediaUrl', 'isNSFW', 'isViewOnce', 'viewedAt', 'audioUrl', 'mediaType']) &&
+      return hasOnlyAllowedFields(['senderId', 'text', 'timestamp', 'isRead', 'mediaUrl', 'isNSFW', 'isViewOnce', 'viewedAt', 'audioUrl']) &&
              data.senderId is string &&
              data.timestamp is number &&
              data.isRead is bool &&
              (!('text' in data) || (data.text is string && data.text.size() <= 1000)) &&
              (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() <= 500)) &&
              (!('audioUrl' in data) || (data.audioUrl is string && data.audioUrl.size() <= 500)) &&
-             (!('mediaType' in data) || (data.mediaType is string)) &&
              (!('isNSFW' in data) || data.isNSFW is bool) &&
              (!('isViewOnce' in data) || data.isViewOnce is bool) &&
              (!('viewedAt' in data) || data.viewedAt == null || data.viewedAt is number);
@@ -145,7 +141,7 @@ service cloud.firestore {
     }
 
     match /albums/{userId}/photos/{photoId} {
-      allow read: if isOwner(userId) || (isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/albums/$(userId)).data.allowedUsers);
+      allow read: if isOwner(userId) || (isAuthenticated() && exists(/databases/$(database)/documents/albums/$(userId)) && request.auth.uid in get(/databases/$(database)/documents/albums/$(userId)).data.allowedUsers);
       allow write: if isOwner(userId);
     }
 
@@ -173,11 +169,7 @@ service cloud.firestore {
     match /events/{eventId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && request.auth.uid == request.resource.data.creatorUid;
-      // Creator can update all fields; anyone authenticated can only modify the attendees array (RSVP)
-      allow update: if isAuthenticated() && (
-        request.auth.uid == resource.data.creatorUid ||
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attendees'])
-      );
+      allow update: if isAuthenticated(); // Allow RSVP
       allow delete: if isAuthenticated() && request.auth.uid == resource.data.creatorUid;
     }
 
@@ -188,35 +180,7 @@ service cloud.firestore {
 
     match /tribes/{tribeId} {
       allow read: if isAuthenticated();
-      // Only allow updates that change the members array (join/leave) or full creation
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members']);
-    }
-
-    match /matches/{matchId} {
-      allow read: if isAuthenticated() && (
-        request.auth.uid == resource.data.userA || request.auth.uid == resource.data.userB
-      );
-      allow create: if isAuthenticated() && (
-        request.auth.uid == request.resource.data.userA || request.auth.uid == request.resource.data.userB
-      );
-    }
-
-    match /checkins/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if isOwner(userId);
-    }
-
-    match /event_chats/{eventId}/messages/{messageId} {
-      allow read: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/events/$(eventId)).data.attendees;
-      allow create: if isAuthenticated() &&
-        request.auth.uid in get(/databases/$(database)/documents/events/$(eventId)).data.attendees &&
-        request.resource.data.senderId == request.auth.uid;
-      allow delete: if isAuthenticated() && (
-        request.auth.uid == resource.data.senderId ||
-        request.auth.uid == get(/databases/$(database)/documents/events/$(eventId)).data.creatorUid
-      );
+      allow write: if isAuthenticated(); // Allow join/leave
     }
   }
 }

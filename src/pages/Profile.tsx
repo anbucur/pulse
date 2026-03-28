@@ -1,15 +1,15 @@
+/// <reference types="vite/client" />
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc, updateDoc, setDoc, deleteDoc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
-import { LogOut, Edit3, Settings, ShieldCheck, EyeOff, MapPin, Radio, Sparkles, Loader2, Camera, X, CheckCircle, Zap, Eye, Dog, Image as ImageIcon, Video, Crown, Phone, Lightbulb } from 'lucide-react';
-import { callAI } from '../lib/ai';
-import { toast } from '../lib/toast';
+import { LogOut, Edit3, Settings, ShieldCheck, EyeOff, MapPin, Radio, Sparkles, Loader2, Camera, X, CheckCircle, Zap, Eye, Dog, Image as ImageIcon, Video } from 'lucide-react';
+import { GoogleGenAI } from '@google/genai';
 import Webcam from 'react-webcam';
 import { uploadMedia } from '../lib/uploadMedia';
 
 export default function Profile() {
-  const { user, logout, isPremium, plan, tokenBalance } = useAuth();
+  const { user, logout, isPremium } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [isGhostMode, setIsGhostMode] = useState(false);
   const [incognitoMode, setIncognitoMode] = useState(false);
@@ -23,17 +23,6 @@ export default function Profile() {
   const [viewers, setViewers] = useState<any[]>([]);
   const [taps, setTaps] = useState<any[]>([]);
   const [albums, setAlbums] = useState<any[]>([]);
-  const [showPulseUpgrade, setShowPulseUpgrade] = useState(false);
-  const [upgradingPulse, setUpgradingPulse] = useState(false);
-  const [showProviderPlans, setShowProviderPlans] = useState(false);
-  const [upgradingProviderPlan, setUpgradingProviderPlan] = useState<string | null>(null);
-  const [show2FA, setShow2FA] = useState(false);
-  const [twoFAPhone, setTwoFAPhone] = useState('');
-  const [showAITips, setShowAITips] = useState(false);
-  const [aiTips, setAITips] = useState<{ field: string; suggestion: string; newValue?: string }[]>([]);
-  const [loadingTips, setLoadingTips] = useState(false);
-  const [showMoodPicker, setShowMoodPicker] = useState(false);
-  const [activeMoodColor, setActiveMoodColor] = useState<string | null>(null);
   const webcamRef = useRef<Webcam>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -52,8 +41,6 @@ export default function Profile() {
         setBroadcast(data.broadcast || '');
         setTravelLat(data.lat?.toString() || '');
         setTravelLng(data.lng?.toString() || '');
-        const moodStillActive = data.moodColor && data.moodExpiresAt && data.moodExpiresAt > Date.now();
-        setActiveMoodColor(moodStillActive ? data.moodColor : null);
       }
     };
     fetchProfile();
@@ -101,7 +88,7 @@ export default function Profile() {
       });
     } catch (error) {
       console.error('Error uploading album photo:', error);
-      toast.error('Failed to upload photo. Please try again.');
+      alert('Failed to upload album photo.');
     } finally {
       setUploadingMedia(false);
       if (albumInputRef.current) albumInputRef.current.value = '';
@@ -233,35 +220,38 @@ export default function Profile() {
     const lat = parseFloat(travelLat);
     const lng = parseFloat(travelLng);
     if (isNaN(lat) || isNaN(lng)) return alert('Invalid coordinates');
-
-    let travelCity = '';
-    try {
-      const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
-      const geoData = await geoRes.json();
-      travelCity = geoData.address?.city || geoData.address?.town || geoData.address?.state || '';
-    } catch (_) { /* ignore geocoding errors */ }
-
-    await updateDoc(doc(db, 'public_profiles', user.uid), { lat, lng, travelCity });
-    setProfile({ ...profile, lat, lng, travelCity });
-    alert(`Location updated!${travelCity ? ` Now showing as: ${travelCity}` : ''}`);
+    
+    await updateDoc(doc(db, 'public_profiles', user.uid), {
+      lat,
+      lng
+    });
+    alert('Location updated!');
   };
 
   const handleOptimizeProfile = async () => {
     if (!user || !profile) return;
     setOptimizing(true);
     try {
-      const result = await callAI<{ bio: string }>('/api/ai/optimize-bio', {
-        bio: profile.bio,
-        intent: profile.intent,
-        sexualRole: profile.sexualRole,
-        age: profile.age,
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const prompt = `Rewrite this dating app bio to be more engaging, attractive, and tailored to their intent. Keep it under 300 characters.
+      Current Bio: ${profile.bio || 'None'}
+      Intent: ${profile.intent}
+      Role: ${profile.sexualRole}
+      Age: ${profile.age}`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
       });
-      const newBio = result.bio || profile.bio;
-      await updateDoc(doc(db, 'public_profiles', user.uid), { bio: newBio });
+
+      const newBio = response.text?.trim() || profile.bio;
+      await updateDoc(doc(db, 'public_profiles', user.uid), {
+        bio: newBio
+      });
       setProfile({ ...profile, bio: newBio });
     } catch (error) {
       console.error('Error optimizing profile:', error);
-      toast.error('Failed to optimize bio. Please try again.');
+      alert('Failed to optimize profile.');
     } finally {
       setOptimizing(false);
     }
@@ -276,12 +266,34 @@ export default function Profile() {
     setVerifying(true);
 
     try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      // Extract base64 data
       const base64Data = imageSrc.split(',')[1];
-      const result = await callAI<{ verified: boolean; reason: string }>('/api/ai/verify-photo', { base64Data });
 
+      const prompt = `
+        Analyze this selfie for a dating app profile verification.
+        Does this image contain a clear, well-lit human face?
+        Return a JSON object with 'verified' (boolean) and 'reason' (string).
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: {
+          parts: [
+            { text: prompt },
+            { inlineData: { data: base64Data, mimeType: 'image/jpeg' } }
+          ]
+        },
+        config: { responseMimeType: "application/json" }
+      });
+
+      const result = JSON.parse(response.text || '{"verified": false, "reason": "Failed to parse"}');
+      
       if (result.verified) {
-        await updateDoc(doc(db, 'public_profiles', user.uid), { isVerified: true });
-        await updateDoc(doc(db, 'users', user.uid), { isVerified: true });
+        await updateDoc(doc(db, 'public_profiles', user.uid), {
+          isVerified: true
+        });
         setProfile({ ...profile, isVerified: true });
         alert('Profile verified successfully!');
       } else {
@@ -294,94 +306,6 @@ export default function Profile() {
       setVerifying(false);
     }
   }, [webcamRef, user, profile]);
-
-  const handleUpgradePulse = async () => {
-    if (!user) return;
-    setUpgradingPulse(true);
-    try {
-      const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
-      await updateDoc(doc(db, 'users', user.uid), {
-        isPremium: true,
-        premiumExpiresAt: expiresAt
-      });
-      alert('Welcome to Pulse+! Premium features are now unlocked.');
-      setShowPulseUpgrade(false);
-      window.location.reload();
-    } catch (e) {
-      console.error('Error upgrading to Pulse+', e);
-    } finally {
-      setUpgradingPulse(false);
-    }
-  };
-
-  const handleUpgradeProviderPlan = async (planId: string) => {
-    if (!user) return;
-    setUpgradingProviderPlan(planId);
-    try {
-      const token = await user.getIdToken();
-      const resp = await fetch('/api/plan/upgrade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ planId }),
-      });
-      if (!resp.ok) throw new Error('Upgrade failed');
-      const data = await resp.json();
-      toast.success(`Plan upgraded! You have ${data.tokenBalance?.toLocaleString()} tokens.`);
-      setShowProviderPlans(false);
-      window.location.reload();
-    } catch (e) {
-      console.error('Error upgrading provider plan', e);
-      toast.error('Could not upgrade plan. Please try again.');
-    } finally {
-      setUpgradingProviderPlan(null);
-    }
-  };
-
-  const fetchAITips = async () => {
-    if (!profile) return;
-    setLoadingTips(true);
-    setShowAITips(true);
-    try {
-      const result = await callAI<{ tips: { field: string; suggestion: string; newValue?: string }[] }>(
-        '/api/ai/profile-tips',
-        { profile }
-      );
-      setAITips(result.tips || []);
-    } catch (error) {
-      console.error('Error fetching AI tips:', error);
-      setAITips([{ field: 'general', suggestion: 'Failed to load tips. Please try again.' }]);
-    } finally {
-      setLoadingTips(false);
-    }
-  };
-
-  const applyAITip = async (tip: { field: string; newValue?: string }) => {
-    if (!user || !tip.newValue) return;
-    try {
-      if (tip.field === 'bio') {
-        await updateDoc(doc(db, 'public_profiles', user.uid), { bio: tip.newValue });
-        setProfile({ ...profile, bio: tip.newValue });
-      }
-      setAITips(prev => prev.filter(t => t.field !== tip.field || t.newValue !== tip.newValue));
-    } catch (error) {
-      console.error('Error applying AI tip:', error);
-    }
-  };
-
-  const setMoodRing = async (color: string | null) => {
-    if (!user) return;
-    try {
-      const moodExpiresAt = color ? Date.now() + 4 * 60 * 60 * 1000 : null; // 4 hours
-      await updateDoc(doc(db, 'public_profiles', user.uid), {
-        moodColor: color,
-        moodExpiresAt,
-      });
-      setActiveMoodColor(color);
-    } catch (error) {
-      console.error('Error setting mood:', error);
-    }
-    setShowMoodPicker(false);
-  };
 
   const seedDemoProfiles = async () => {
     if (!profile) return;
@@ -474,12 +398,10 @@ export default function Profile() {
               )}
             </div>
             <div>
-              <h1 className="text-3xl font-bold flex items-center gap-2">
+              <h1 className="text-3xl font-bold flex items-center">
                 {profile.displayName}, {profile.age}
-                {isPremium && <span className="text-xs bg-amber-500 text-black px-2 py-0.5 rounded-full font-bold flex items-center"><Crown className="w-3 h-3 mr-1" />Pulse+</span>}
               </h1>
-              <p className="text-zinc-400">{profile.pronouns ? `${profile.pronouns} · ` : ''}{profile.sexualRole} • {profile.height}cm • {profile.weight}kg</p>
-              {incognitoMode && <p className="text-xs text-zinc-500 flex items-center mt-1"><EyeOff className="w-3 h-3 mr-1" />Incognito active</p>}
+              <p className="text-zinc-400">{profile.sexualRole} • {profile.height}cm • {profile.weight}kg</p>
             </div>
           </div>
           <button className="p-3 bg-zinc-800 rounded-full hover:bg-zinc-700 transition-colors">
@@ -510,42 +432,6 @@ export default function Profile() {
           </div>
         )}
 
-        {/* Mood Ring */}
-        <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">Mood Ring</h3>
-            <span className="text-xs text-zinc-500">Visible to everyone · expires in 4h</span>
-          </div>
-          <div className="flex items-center space-x-3 flex-wrap gap-y-2">
-            {[
-              { color: '#ef4444', label: 'Available Now' },
-              { color: '#eab308', label: 'Just Browsing' },
-              { color: '#22c55e', label: 'Open to Dates' },
-              { color: '#3b82f6', label: 'Socializing' },
-              { color: '#a855f7', label: 'Adventurous' },
-            ].map(({ color, label }) => (
-              <button
-                key={color}
-                onClick={() => setMoodRing(activeMoodColor === color ? null : color)}
-                title={label}
-                className={`w-9 h-9 rounded-full border-4 transition-all ${activeMoodColor === color ? 'scale-125 border-white' : 'border-transparent'}`}
-                style={{ backgroundColor: color }}
-              />
-            ))}
-            {activeMoodColor && (
-              <button
-                onClick={() => setMoodRing(null)}
-                className="text-xs text-zinc-500 hover:text-zinc-300 ml-2"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-          {activeMoodColor && (
-            <p className="text-xs text-zinc-500 mt-2">Mood ring active — showing on your profile card</p>
-          )}
-        </div>
-
         {/* Intent */}
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
           <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-2">Primary Intent</h3>
@@ -558,67 +444,17 @@ export default function Profile() {
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
           <div className="flex justify-between items-center mb-2">
             <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">About Me</h3>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={fetchAITips}
-                disabled={loadingTips}
-                className="flex items-center text-xs text-amber-500 hover:text-amber-400 disabled:opacity-50"
-                title="Get AI profile improvement tips"
-              >
-                {loadingTips ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Lightbulb className="w-3 h-3 mr-1" />}
-                AI Tips
-              </button>
-              <button
-                onClick={handleOptimizeProfile}
-                disabled={optimizing}
-                className="flex items-center text-xs text-rose-500 hover:text-rose-400 disabled:opacity-50"
-              >
-                {optimizing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
-                AI Polish
-              </button>
-            </div>
+            <button 
+              onClick={handleOptimizeProfile}
+              disabled={optimizing}
+              className="flex items-center text-xs text-rose-500 hover:text-rose-400 disabled:opacity-50"
+            >
+              {optimizing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+              AI Polish
+            </button>
           </div>
           <p className="text-zinc-300 leading-relaxed">{profile.bio || "No bio provided."}</p>
         </div>
-
-        {/* AI Profile Tips */}
-        {showAITips && (
-          <div className="bg-zinc-900 rounded-2xl p-6 border border-amber-500/30">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-wider flex items-center">
-                <Lightbulb className="w-4 h-4 mr-2" /> AI Profile Tips
-              </h3>
-              <button onClick={() => setShowAITips(false)} className="text-zinc-500 hover:text-zinc-300">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            {loadingTips ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
-                <span className="ml-2 text-zinc-400 text-sm">Analyzing your profile...</span>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {aiTips.map((tip, i) => (
-                  <div key={i} className="bg-zinc-800 rounded-xl p-4 border border-zinc-700">
-                    <p className="text-zinc-300 text-sm mb-2">{tip.suggestion}</p>
-                    {tip.newValue && tip.field === 'bio' && (
-                      <button
-                        onClick={() => applyAITip(tip)}
-                        className="text-xs bg-amber-500 hover:bg-amber-600 text-black font-medium px-3 py-1 rounded-full transition-colors"
-                      >
-                        Apply suggestion
-                      </button>
-                    )}
-                  </div>
-                ))}
-                {aiTips.length === 0 && !loadingTips && (
-                  <p className="text-zinc-500 text-sm text-center">Your profile looks great! No major improvements needed.</p>
-                )}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Tags & Tribes */}
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
@@ -757,23 +593,6 @@ export default function Profile() {
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
           <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-4">Extended Stats</h3>
           <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-xs text-zinc-500 mb-1">PrEP Status</label>
-              <select
-                value={profile.prepStatus || ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setProfile({...profile, prepStatus: val});
-                  updateDoc(doc(db, 'public_profiles', user.uid), { prepStatus: val });
-                }}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
-              >
-                <option value="">Select...</option>
-                <option value="On PrEP">On PrEP</option>
-                <option value="Not on PrEP">Not on PrEP</option>
-                <option value="Prefer not to say">Prefer not to say</option>
-              </select>
-            </div>
             <div>
               <label className="block text-xs text-zinc-500 mb-1">Pronouns</label>
               <input 
@@ -1126,107 +945,9 @@ export default function Profile() {
           </div>
         </div>
 
-        {/* Pulse+ Upgrade Banner */}
-        {!isPremium && (
-          <div className="bg-gradient-to-r from-amber-500/20 to-rose-500/20 border border-amber-500/30 rounded-2xl p-6">
-            <div className="flex items-center mb-3">
-              <Crown className="w-6 h-6 text-amber-500 mr-2" />
-              <h3 className="text-lg font-bold text-white">Upgrade to Pulse+</h3>
-            </div>
-            <ul className="text-sm text-zinc-300 space-y-1 mb-4">
-              <li>⚡ Boost profile visibility</li>
-              <li>👁️ See who viewed you (unblurred)</li>
-              <li>🌍 Travel / Teleport Mode</li>
-              <li>🕵️ Incognito browsing</li>
-              <li>🔍 Advanced filters</li>
-            </ul>
-            <button
-              onClick={() => setShowPulseUpgrade(true)}
-              className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl transition-colors"
-            >
-              Subscribe — $9.99/mo
-            </button>
-          </div>
-        )}
-
-        {/* Provider Token Plans / Coding Plan */}
-        {plan === 'free' || plan === 'pulse_plus' ? (
-          <div className="bg-gradient-to-r from-violet-500/20 to-cyan-500/20 border border-violet-500/30 rounded-2xl p-6">
-            <div className="flex items-center mb-3">
-              <Sparkles className="w-6 h-6 text-violet-400 mr-2" />
-              <h3 className="text-lg font-bold text-white">AI Provider Plans</h3>
-            </div>
-            <p className="text-sm text-zinc-400 mb-4">Unlock premium AI features powered by Minimax, Anthropic Claude, or z.ai for coding.</p>
-            <button
-              onClick={() => setShowProviderPlans(true)}
-              className="w-full py-3 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-xl transition-colors"
-            >
-              View Plans
-            </button>
-          </div>
-        ) : (
-          <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center">
-                <Sparkles className="w-5 h-5 text-violet-400 mr-2" />
-                <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">AI Token Balance</h3>
-              </div>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 font-medium">
-                {plan === 'token_minimax' ? 'Minimax' : plan === 'token_anthropic' ? 'Anthropic' : 'z.ai Coding'}
-              </span>
-            </div>
-            <p className="text-2xl font-bold text-white">{tokenBalance.toLocaleString()} <span className="text-sm font-normal text-zinc-400">tokens remaining</span></p>
-            <button
-              onClick={() => setShowProviderPlans(true)}
-              className="mt-3 text-sm text-violet-400 hover:text-violet-300 transition-colors"
-            >
-              Change plan
-            </button>
-          </div>
-        )}
-
-        {/* 2FA Section */}
-        <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center">
-              <Phone className="w-5 h-5 text-zinc-400 mr-2" />
-              <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">Two-Factor Authentication</h3>
-            </div>
-          </div>
-          {show2FA ? (
-            <div className="space-y-3">
-              <input
-                type="tel"
-                placeholder="+1 (555) 000-0000"
-                value={twoFAPhone}
-                onChange={(e) => setTwoFAPhone(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500"
-              />
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => { alert('2FA enrollment requires Firebase phone auth setup with reCAPTCHA. Stub: 2FA enabled.'); setShow2FA(false); }}
-                  className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-                >
-                  Enable 2FA
-                </button>
-                <button onClick={() => setShow2FA(false)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm transition-colors">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShow2FA(true)}
-              className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-medium transition-colors"
-            >
-              Enable 2FA via Phone
-            </button>
-          )}
-        </div>
-
         {/* Settings & Logout */}
         <div className="space-y-2">
-          <button
+          <button 
             onClick={seedDemoProfiles}
             className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl border border-zinc-800 hover:bg-zinc-800 transition-colors"
           >
@@ -1241,7 +962,7 @@ export default function Profile() {
               <span>Settings</span>
             </div>
           </button>
-          <button
+          <button 
             onClick={logout}
             className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl border border-zinc-800 hover:bg-zinc-800 transition-colors text-red-500"
           >
@@ -1252,130 +973,6 @@ export default function Profile() {
           </button>
         </div>
       </div>
-
-      {/* Pulse+ Upgrade Modal */}
-      {showPulseUpgrade && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-zinc-900 w-full max-w-sm rounded-3xl p-8 border border-amber-500/30 shadow-2xl">
-            <div className="text-center mb-6">
-              <Crown className="w-12 h-12 text-amber-500 mx-auto mb-3" />
-              <h2 className="text-2xl font-bold text-white mb-1">Pulse+ Premium</h2>
-              <p className="text-zinc-400 text-sm">Unlock the full Pulse experience</p>
-            </div>
-            <ul className="space-y-3 mb-6 text-sm">
-              {[
-                ['⚡', 'Boost — appear at the top of the grid'],
-                ['👁️', 'See exactly who viewed your profile'],
-                ['🌍', 'Travel / Teleport anywhere in the world'],
-                ['🕵️', 'Incognito mode — browse without a trace'],
-                ['🔍', 'Unlimited advanced filters'],
-              ].map(([icon, text]) => (
-                <li key={text} className="flex items-center text-zinc-300">
-                  <span className="text-lg mr-3">{icon}</span> {text}
-                </li>
-              ))}
-            </ul>
-            <button
-              onClick={handleUpgradePulse}
-              disabled={upgradingPulse}
-              className="w-full py-4 bg-gradient-to-r from-amber-500 to-rose-500 hover:opacity-90 text-white font-bold rounded-2xl text-lg transition-opacity disabled:opacity-50 flex items-center justify-center"
-            >
-              {upgradingPulse ? <Loader2 className="animate-spin w-5 h-5" /> : 'Subscribe — $9.99/mo'}
-            </button>
-            <button onClick={() => setShowPulseUpgrade(false)} className="w-full mt-3 py-2 text-zinc-500 hover:text-zinc-300 text-sm transition-colors">
-              Maybe later
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Provider Plans Modal */}
-      {showProviderPlans && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-zinc-900 w-full max-w-md rounded-3xl p-8 border border-violet-500/30 shadow-2xl my-4">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-bold text-white">AI Provider Plans</h2>
-                <p className="text-zinc-400 text-sm mt-1">Choose your AI engine</p>
-              </div>
-              <button onClick={() => setShowProviderPlans(false)} className="p-2 text-zinc-500 hover:text-zinc-300 transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {/* Minimax Token Plan */}
-              <div className="border border-zinc-700 rounded-2xl p-5 hover:border-violet-500/50 transition-colors">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="font-bold text-white">Minimax Token Plan</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">Powered by Minimax.io</p>
-                  </div>
-                  <span className="text-lg font-bold text-violet-300">$14.99<span className="text-xs font-normal text-zinc-400">/mo</span></span>
-                </div>
-                <ul className="text-sm text-zinc-400 space-y-1 mb-4">
-                  <li>🪙 5,000,000 tokens / month</li>
-                  <li>✍️ AI bio optimization (Minimax)</li>
-                  <li>🤖 Advanced AI matching features</li>
-                </ul>
-                <button
-                  onClick={() => handleUpgradeProviderPlan('token_minimax')}
-                  disabled={upgradingProviderPlan === 'token_minimax' || plan === 'token_minimax'}
-                  className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center"
-                >
-                  {plan === 'token_minimax' ? 'Current plan' : upgradingProviderPlan === 'token_minimax' ? <Loader2 className="animate-spin w-4 h-4" /> : 'Subscribe — $14.99/mo'}
-                </button>
-              </div>
-
-              {/* Anthropic Token Plan */}
-              <div className="border border-zinc-700 rounded-2xl p-5 hover:border-cyan-500/50 transition-colors">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="font-bold text-white">Anthropic Token Plan</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">Powered by Claude (Anthropic)</p>
-                  </div>
-                  <span className="text-lg font-bold text-cyan-300">$24.99<span className="text-xs font-normal text-zinc-400">/mo</span></span>
-                </div>
-                <ul className="text-sm text-zinc-400 space-y-1 mb-4">
-                  <li>🪙 1,000,000 tokens / month</li>
-                  <li>✍️ AI bio optimization (Claude)</li>
-                  <li>🧠 Highest quality AI responses</li>
-                </ul>
-                <button
-                  onClick={() => handleUpgradeProviderPlan('token_anthropic')}
-                  disabled={upgradingProviderPlan === 'token_anthropic' || plan === 'token_anthropic'}
-                  className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center"
-                >
-                  {plan === 'token_anthropic' ? 'Current plan' : upgradingProviderPlan === 'token_anthropic' ? <Loader2 className="animate-spin w-4 h-4" /> : 'Subscribe — $24.99/mo'}
-                </button>
-              </div>
-
-              {/* z.ai Coding Plan */}
-              <div className="border border-zinc-700 rounded-2xl p-5 hover:border-emerald-500/50 transition-colors">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="font-bold text-white">z.ai Coding Plan</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">Powered by z.ai</p>
-                  </div>
-                  <span className="text-lg font-bold text-emerald-300">$19.99<span className="text-xs font-normal text-zinc-400">/mo</span></span>
-                </div>
-                <ul className="text-sm text-zinc-400 space-y-1 mb-4">
-                  <li>🪙 2,000,000 tokens / month</li>
-                  <li>💻 Code review &amp; debugging assistant</li>
-                  <li>🛠️ Multi-language coding help</li>
-                </ul>
-                <button
-                  onClick={() => handleUpgradeProviderPlan('coding_zai')}
-                  disabled={upgradingProviderPlan === 'coding_zai' || plan === 'coding_zai'}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center"
-                >
-                  {plan === 'coding_zai' ? 'Current plan' : upgradingProviderPlan === 'coding_zai' ? <Loader2 className="animate-spin w-4 h-4" /> : 'Subscribe — $19.99/mo'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Camera Modal for Verification */}
       {showCamera && (

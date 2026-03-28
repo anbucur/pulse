@@ -1,15 +1,17 @@
+/// <reference types="vite/client" />
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, increment } from 'firebase/firestore';
-import { db } from '../firebase';
+import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, increment, deleteDoc } from 'firebase/firestore';
+import { db, auth } from '../firebase';
+import { handleFirestoreError, OperationType } from '../lib/firestoreError';
 import { useAuth } from '../contexts/AuthContext';
 import { ArrowLeft, Send, Image as ImageIcon, Sparkles, Loader2, Bot, Camera, X, Eye, EyeOff, Mic, Square, Trash2, Bookmark } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { callAI } from '../lib/ai';
-import { toast } from '../lib/toast';
+import { GoogleGenAI } from '@google/genai';
 import Webcam from 'react-webcam';
 import { uploadMedia } from '../lib/uploadMedia';
-import { deleteDoc } from 'firebase/firestore';
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 interface Message {
   id: string;
@@ -41,9 +43,6 @@ export default function Chat() {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [showSavedPhrases, setShowSavedPhrases] = useState(false);
   const [savedPhrases, setSavedPhrases] = useState<{id: string, text: string}[]>([]);
-  const [disappearAfter, setDisappearAfter] = useState<number | null>(null);
-  const [showDisappearMenu, setShowDisappearMenu] = useState(false);
-  const [nsfwRevealed, setNsfwRevealed] = useState<Set<string>>(new Set());
   const [newPhrase, setNewPhrase] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const webcamRef = useRef<Webcam>(null);
@@ -83,13 +82,16 @@ export default function Chat() {
     };
     fetchProfiles();
 
-    // Listen for chat metadata (typing status + disappearAfter)
+    // Listen for chat metadata (typing status)
     const unsubscribeChat = onSnapshot(doc(db, 'chats', chatId), (doc) => {
       if (doc.exists()) {
         const data = doc.data();
         const otherUid = data.participants.find((id: string) => id !== user.uid);
-        setOtherUserTyping(!!(otherUid && data.typing && data.typing[otherUid]));
-        setDisappearAfter(data.disappearAfter ?? null);
+        if (otherUid && data.typing && data.typing[otherUid]) {
+          setOtherUserTyping(true);
+        } else {
+          setOtherUserTyping(false);
+        }
       }
     });
 
@@ -251,8 +253,7 @@ export default function Chat() {
     try {
       await deleteDoc(doc(db, `chats/${chatId}/messages`, msgId));
     } catch (error) {
-      console.error("Error unsending message:", error);
-      alert("Failed to unsend message.");
+      handleFirestoreError(error, OperationType.DELETE, `chats/${chatId}/messages/${msgId}`);
     }
   };
 
@@ -265,7 +266,7 @@ export default function Chat() {
       });
       setNewPhrase('');
     } catch (error) {
-      console.error("Error adding phrase:", error);
+      handleFirestoreError(error, OperationType.CREATE, `saved_phrases/${user.uid}/phrases`);
     }
   };
 
@@ -274,7 +275,7 @@ export default function Chat() {
     try {
       await deleteDoc(doc(db, `saved_phrases/${user.uid}/phrases`, phraseId));
     } catch (error) {
-      console.error("Error deleting phrase:", error);
+      handleFirestoreError(error, OperationType.DELETE, `saved_phrases/${user.uid}/phrases/${phraseId}`);
     }
   };
 
@@ -300,15 +301,23 @@ export default function Chat() {
         }
       }
 
-      await addDoc(collection(db, `chats/${chatId}/messages`), messageData);
+      try {
+        await addDoc(collection(db, `chats/${chatId}/messages`), messageData);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `chats/${chatId}/messages`);
+      }
 
       const otherUid = otherUser?.uid || (await getDoc(doc(db, 'chats', chatId))).data()?.participants.find((id: string) => id !== user.uid);
 
-      await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: isViewOnce ? '📸 View-Once Photo' : mediaUrl ? '📸 Photo' : messageText,
-        updatedAt: Date.now(),
-        ...(otherUid ? { [`unreadCount.${otherUid}`]: increment(1) } : {})
-      });
+      try {
+        await updateDoc(doc(db, 'chats', chatId), {
+          lastMessage: isViewOnce ? '📸 View-Once Photo' : mediaUrl ? '📸 Photo' : messageText,
+          updatedAt: Date.now(),
+          ...(otherUid ? { [`unreadCount.${otherUid}`]: increment(1) } : {})
+        });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `chats/${chatId}`);
+      }
 
       // Auto-reply for demo profiles
       if (otherUid && otherUid.startsWith('demo_')) {
@@ -377,15 +386,36 @@ export default function Chat() {
   const generateIcebreaker = async () => {
     if (!myProfile || !otherUser) return;
     setIsGeneratingIcebreaker(true);
+    
     try {
-      const result = await callAI<{ text: string }>('/api/ai/icebreaker', {
-        myProfile: { displayName: myProfile.displayName, intent: myProfile.intent, sexualRole: myProfile.sexualRole, bio: myProfile.bio },
-        otherProfile: { displayName: otherUser.displayName, intent: otherUser.intent, sexualRole: otherUser.sexualRole, bio: otherUser.bio },
+      const prompt = `
+        You are an AI wingman for a dating app called Pulse.
+        Generate a short, engaging, and contextual icebreaker message for me to send to this user.
+        
+        My Profile:
+        Intent: ${myProfile.intent}
+        Role: ${myProfile.sexualRole}
+        Bio: ${myProfile.bio}
+        
+        Their Profile:
+        Name: ${otherUser.displayName}
+        Intent: ${otherUser.intent}
+        Role: ${otherUser.sexualRole}
+        Bio: ${otherUser.bio}
+        
+        Return ONLY the text of the suggested message. Keep it under 150 characters. Be casual and direct.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
       });
-      if (result.text) setNewMessage(result.text);
+
+      if (response.text) {
+        setNewMessage(response.text.trim().replace(/^["']|["']$/g, ''));
+      }
     } catch (error) {
       console.error("Error generating icebreaker:", error);
-      toast.error("Could not generate icebreaker. Try again.");
     } finally {
       setIsGeneratingIcebreaker(false);
     }
@@ -394,20 +424,41 @@ export default function Chat() {
   const generateReply = async () => {
     if (!myProfile || !otherUser || messages.length === 0) return;
     setIsGeneratingReply(true);
+    
     try {
-      const recentMessages = messages.slice(-5).map(m =>
+      const recentMessages = messages.slice(-5).map(m => 
         `${m.senderId === user?.uid ? 'Me' : otherUser.displayName}: ${m.text || (m.isViewOnce ? '[Photo]' : '')}`
       ).join('\n');
 
-      const result = await callAI<{ text: string }>('/api/ai/reply-suggest', {
-        myProfile: { intent: myProfile.intent, sexualRole: myProfile.sexualRole },
-        otherProfile: { displayName: otherUser.displayName, intent: otherUser.intent, sexualRole: otherUser.sexualRole },
-        recentMessages,
+      const prompt = `
+        You are an AI wingman for a dating app called Pulse.
+        Generate a short, engaging reply for me to send based on the recent conversation history.
+        
+        My Profile:
+        Intent: ${myProfile.intent}
+        Role: ${myProfile.sexualRole}
+        
+        Their Profile:
+        Name: ${otherUser.displayName}
+        Intent: ${otherUser.intent}
+        Role: ${otherUser.sexualRole}
+        
+        Recent Conversation:
+        ${recentMessages}
+        
+        Return ONLY the text of the suggested reply. Keep it under 150 characters. Match the tone of the conversation.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
       });
-      if (result.text) setNewMessage(result.text);
+
+      if (response.text) {
+        setNewMessage(response.text.trim().replace(/^["']|["']$/g, ''));
+      }
     } catch (error) {
       console.error("Error generating reply:", error);
-      toast.error("Could not generate reply suggestion. Try again.");
     } finally {
       setIsGeneratingReply(false);
     }
@@ -435,46 +486,16 @@ export default function Chat() {
           </div>
         </div>
         
-        <div className="flex items-center space-x-2">
-          {messages.length === 0 && (
-            <button
-              onClick={generateIcebreaker}
-              disabled={isGeneratingIcebreaker || !otherUser || !myProfile}
-              className="flex items-center text-xs font-medium bg-rose-500/10 text-rose-500 px-3 py-1.5 rounded-full border border-rose-500/20 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
-            >
-              {isGeneratingIcebreaker ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
-              Icebreaker
-            </button>
-          )}
-          <div className="relative">
-            <button
-              onClick={() => setShowDisappearMenu(d => !d)}
-              className={`flex items-center text-xs px-2 py-1.5 rounded-full border transition-colors ${disappearAfter ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-zinc-800 text-zinc-400 border-zinc-700'}`}
-              title="Disappearing messages"
-            >
-              <EyeOff className="w-3.5 h-3.5 mr-1" />
-              {disappearAfter ? (disappearAfter === 3600000 ? '1h' : disappearAfter === 86400000 ? '24h' : '7d') : 'Off'}
-            </button>
-            {showDisappearMenu && (
-              <div className="absolute right-0 top-9 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl z-50 min-w-[120px]">
-                {[['Off', null], ['1 Hour', 3600000], ['24 Hours', 86400000], ['7 Days', 604800000]].map(([label, val]) => (
-                  <button
-                    key={String(label)}
-                    onClick={async () => {
-                      if (chatId) {
-                        await updateDoc(doc(db, 'chats', chatId), { disappearAfter: val });
-                      }
-                      setShowDisappearMenu(false);
-                    }}
-                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-zinc-700 first:rounded-t-xl last:rounded-b-xl transition-colors ${disappearAfter === val ? 'text-rose-500' : 'text-zinc-300'}`}
-                  >
-                    {String(label)}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        {messages.length === 0 && (
+          <button 
+            onClick={generateIcebreaker}
+            disabled={isGeneratingIcebreaker || !otherUser || !myProfile}
+            className="flex items-center text-xs font-medium bg-rose-500/10 text-rose-500 px-3 py-1.5 rounded-full border border-rose-500/20 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+          >
+            {isGeneratingIcebreaker ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
+            Icebreaker
+          </button>
+        )}
       </div>
 
       {/* Messages */}
@@ -492,91 +513,68 @@ export default function Chat() {
             <p>You matched with {otherUser?.displayName}. Say hi!</p>
           </div>
         )}
-        {messages
-          .filter(msg => {
-            if (!disappearAfter) return true;
-            return msg.timestamp + disappearAfter > Date.now();
-          })
-          .map((msg, idx, arr) => {
-            const isMe = msg.senderId === user?.uid;
-            const isLastFromMe = isMe && arr.slice(idx + 1).every(m => m.senderId !== user?.uid);
-            const isNSFWRevealed = nsfwRevealed.has(msg.id);
-            return (
-              <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} group w-full`}>
-                  {isMe && (
-                    <button
-                      onClick={() => handleUnsendMessage(msg.id)}
-                      className="opacity-0 group-hover:opacity-100 p-2 text-zinc-500 hover:text-rose-500 transition-opacity mr-2 self-center"
-                      title="Unsend message"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                  <div
-                    className={`max-w-[75%] rounded-2xl px-4 py-2 ${
-                      isMe
-                        ? 'bg-rose-600 text-white rounded-br-sm'
-                        : 'bg-zinc-800 text-zinc-100 rounded-bl-sm'
-                    }`}
-                  >
-                    {msg.isViewOnce ? (
-                      <div className="flex items-center space-x-2">
-                        {isMe ? (
-                          <div className="flex items-center text-rose-200">
-                            <Eye className="w-4 h-4 mr-2" />
-                            <span className="text-sm italic">View-Once Photo Sent</span>
-                          </div>
-                        ) : msg.viewedAt ? (
-                          <div className="flex items-center text-zinc-500">
-                            <EyeOff className="w-4 h-4 mr-2" />
-                            <span className="text-sm italic">Photo Viewed</span>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => handleViewMedia(msg)}
-                            className="flex items-center bg-rose-500 text-white px-3 py-1.5 rounded-lg hover:bg-rose-600 transition-colors"
-                          >
-                            <Eye className="w-4 h-4 mr-2" />
-                            <span className="text-sm font-medium">Tap to View</span>
-                          </button>
-                        )}
+        {messages.map((msg) => {
+          const isMe = msg.senderId === user?.uid;
+          return (
+            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group`}>
+              {isMe && (
+                <button 
+                  onClick={() => handleUnsendMessage(msg.id)}
+                  className="opacity-0 group-hover:opacity-100 p-2 text-zinc-500 hover:text-rose-500 transition-opacity mr-2 self-center"
+                  title="Unsend message"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+              <div 
+                className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                  isMe 
+                    ? 'bg-rose-600 text-white rounded-br-sm' 
+                    : 'bg-zinc-800 text-zinc-100 rounded-bl-sm'
+                }`}
+              >
+                {msg.isViewOnce ? (
+                  <div className="flex items-center space-x-2">
+                    {isMe ? (
+                      <div className="flex items-center text-rose-200">
+                        <Eye className="w-4 h-4 mr-2" />
+                        <span className="text-sm italic">View-Once Photo Sent</span>
                       </div>
-                    ) : msg.mediaUrl ? (
-                      <div className="relative">
-                        <img
-                          src={msg.mediaUrl}
-                          alt="Media"
-                          className={`rounded-lg max-w-full h-auto mb-2 transition-all ${!isNSFWRevealed ? 'blur-xl cursor-pointer' : ''}`}
-                          onClick={() => !isNSFWRevealed && setNsfwRevealed(prev => new Set([...prev, msg.id]))}
-                        />
-                        {!isNSFWRevealed && (
-                          <div className="absolute inset-0 flex items-center justify-center" onClick={() => setNsfwRevealed(prev => new Set([...prev, msg.id]))}>
-                            <span className="text-xs bg-black/60 text-white px-2 py-1 rounded-full cursor-pointer">Tap to reveal</span>
-                          </div>
-                        )}
+                    ) : msg.viewedAt ? (
+                      <div className="flex items-center text-zinc-500">
+                        <EyeOff className="w-4 h-4 mr-2" />
+                        <span className="text-sm italic">Photo Viewed</span>
                       </div>
-                    ) : msg.audioUrl ? (
-                      <audio src={msg.audioUrl} controls className="w-48 h-10" />
-                    ) : null}
-
-                    {msg.text && <p className="text-sm">{msg.text}</p>}
-
-                    <p className={`text-[10px] mt-1 text-right ${isMe ? 'text-rose-200' : 'text-zinc-500'}`}>
-                      {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
-                      {isMe && <span className="ml-1">{msg.isRead ? '✓✓' : '✓'}</span>}
-                    </p>
+                    ) : (
+                      <button 
+                        onClick={() => handleViewMedia(msg)}
+                        className="flex items-center bg-rose-500 text-white px-3 py-1.5 rounded-lg hover:bg-rose-600 transition-colors"
+                      >
+                        <Eye className="w-4 h-4 mr-2" />
+                        <span className="text-sm font-medium">Tap to View</span>
+                      </button>
+                    )}
                   </div>
-                </div>
-                {/* Seen label for last message sent by me that was read */}
-                {isLastFromMe && msg.isRead && (
-                  <p className="text-[10px] text-zinc-500 mr-1 mt-0.5">
-                    Seen {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
-                  </p>
-                )}
+                ) : msg.mediaUrl ? (
+                  <img src={msg.mediaUrl} alt="Media" className="rounded-lg max-w-full h-auto mb-2" />
+                ) : msg.audioUrl ? (
+                  <audio src={msg.audioUrl} controls className="w-48 h-10" />
+                ) : null}
+                
+                {msg.text && <p className="text-sm">{msg.text}</p>}
+                
+                <p className={`text-[10px] mt-1 text-right ${isMe ? 'text-rose-200' : 'text-zinc-500'}`}>
+                  {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
+                  {isMe && (
+                    <span className="ml-1">
+                      {msg.isRead ? '• Read' : '• Delivered'}
+                    </span>
+                  )}
+                </p>
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
         
         {otherUserTyping && (
           <div className="flex justify-start">

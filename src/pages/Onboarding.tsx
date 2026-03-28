@@ -3,18 +3,13 @@ import { useAuth } from '../contexts/AuthContext';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Camera, CheckCircle2, Loader2, Upload } from 'lucide-react';
-import { uploadMedia } from '../lib/uploadMedia';
-
-const PRESET_TAGS = ['Dates', 'Hookup', 'Friends', 'Relationship', 'Chat', 'Networking'];
+import { Camera, CheckCircle2, Loader2 } from 'lucide-react';
 
 export default function Onboarding() {
   const { user, hasProfile, checkProfileStatus } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     displayName: '',
     age: '',
@@ -23,11 +18,6 @@ export default function Onboarding() {
     sexualRole: 'Versatile',
     intent: 'Chat',
     bio: '',
-    pronouns: '',
-    relationship: '',
-    bodyType: '',
-    hivStatus: '',
-    tags: [] as string[],
   });
 
   if (!user) return <Navigate to="/login" />;
@@ -35,27 +25,12 @@ export default function Onboarding() {
 
   const handleVerify = async () => {
     setLoading(true);
+    // Simulate AI verification
     setTimeout(async () => {
       await setDoc(doc(db, 'users', user.uid), { isVerified: true }, { merge: true });
       setStep(2);
       setLoading(false);
     }, 2000);
-  };
-
-  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setPhotoFile(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setPhotoPreview(reader.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  const toggleTag = (tag: string) => {
-    setFormData(prev => ({
-      ...prev,
-      tags: prev.tags.includes(tag) ? prev.tags.filter(t => t !== tag) : [...prev.tags, tag]
-    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -64,15 +39,6 @@ export default function Onboarding() {
 
     const createProfile = async (latitude: number, longitude: number) => {
       try {
-        let photoURL = user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`;
-        let photos: string[] = [];
-
-        if (photoFile) {
-          const uploadedUrl = await uploadMedia(photoFile, `profile-photos/${user.uid}/${Date.now()}_${photoFile.name}`);
-          photoURL = uploadedUrl;
-          photos = [uploadedUrl];
-        }
-
         await setDoc(doc(db, 'public_profiles', user.uid), {
           uid: user.uid,
           displayName: formData.displayName,
@@ -82,17 +48,12 @@ export default function Onboarding() {
           sexualRole: formData.sexualRole,
           intent: formData.intent,
           bio: formData.bio,
-          pronouns: formData.pronouns,
-          relationship: formData.relationship,
-          bodyType: formData.bodyType,
-          hivStatus: formData.hivStatus,
-          tags: formData.tags,
           lat: latitude,
           lng: longitude,
           lastActive: Date.now(),
+          tags: [],
           tribes: [],
-          photoURL,
-          photos,
+          photoURL: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`
         });
 
         await checkProfileStatus(user.uid);
@@ -107,11 +68,18 @@ export default function Onboarding() {
 
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
-        (position) => createProfile(position.coords.latitude, position.coords.longitude),
-        () => createProfile(37.7749, -122.4194),
-        { timeout: 10000 }
+        (position) => {
+          createProfile(position.coords.latitude, position.coords.longitude);
+        },
+        (error) => {
+          console.warn("Error getting location, using default", error);
+          // Default to a central location (e.g., San Francisco) if location fails
+          createProfile(37.7749, -122.4194);
+        },
+        { timeout: 10000 } // Add a timeout so it doesn't hang forever
       );
     } else {
+      console.warn("Geolocation not supported, using default");
       createProfile(37.7749, -122.4194);
     }
   };
@@ -143,27 +111,10 @@ export default function Onboarding() {
               <p className="text-zinc-400">Now, let's build your profile.</p>
             </div>
 
-            {/* Photo Upload */}
-            <div className="flex flex-col items-center space-y-2">
-              <label className="block text-sm font-medium text-zinc-400">Profile Photo</label>
-              <label className="cursor-pointer">
-                <div className="w-24 h-24 rounded-full overflow-hidden bg-zinc-800 border-2 border-dashed border-zinc-600 flex items-center justify-center hover:border-rose-500 transition-colors">
-                  {photoPreview ? (
-                    <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
-                  ) : (
-                    <Upload className="w-8 h-8 text-zinc-500" />
-                  )}
-                </div>
-                <input type="file" accept="image/*" className="hidden" onChange={handlePhotoSelect} />
-              </label>
-              <p className="text-xs text-zinc-500">Tap to upload photo</p>
-            </div>
-
             <div>
-              <label className="block text-sm font-medium text-zinc-400">Display Name *</label>
+              <label className="block text-sm font-medium text-zinc-400">Display Name</label>
               <input required type="text" value={formData.displayName} onChange={e => setFormData({...formData, displayName: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2" />
             </div>
-
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-zinc-400">Age</label>
@@ -178,54 +129,6 @@ export default function Onboarding() {
                 <input type="number" value={formData.weight} onChange={e => setFormData({...formData, weight: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2" />
               </div>
             </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-zinc-400">Pronouns</label>
-                <select value={formData.pronouns} onChange={e => setFormData({...formData, pronouns: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2">
-                  <option value="">Select...</option>
-                  <option value="he/him">he/him</option>
-                  <option value="they/them">they/them</option>
-                  <option value="she/her">she/her</option>
-                  <option value="he/they">he/they</option>
-                  <option value="any/all">any/all</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-400">Relationship</label>
-                <select value={formData.relationship} onChange={e => setFormData({...formData, relationship: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2">
-                  <option value="">Select...</option>
-                  <option value="Single">Single</option>
-                  <option value="Partnered">Partnered</option>
-                  <option value="Married">Married</option>
-                  <option value="Open Relationship">Open Relationship</option>
-                  <option value="Complicated">Complicated</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-400">Body Type</label>
-                <select value={formData.bodyType} onChange={e => setFormData({...formData, bodyType: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2">
-                  <option value="">Select...</option>
-                  <option value="Slim">Slim</option>
-                  <option value="Athletic">Athletic</option>
-                  <option value="Average">Average</option>
-                  <option value="Muscular">Muscular</option>
-                  <option value="Stocky">Stocky</option>
-                  <option value="Large">Large</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-400">HIV Status</label>
-                <select value={formData.hivStatus} onChange={e => setFormData({...formData, hivStatus: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2">
-                  <option value="">Select...</option>
-                  <option value="Negative">Negative</option>
-                  <option value="Negative, on PrEP">Neg, on PrEP</option>
-                  <option value="Positive, Undetectable">Positive, U=U</option>
-                  <option value="Positive">Positive</option>
-                </select>
-              </div>
-            </div>
-
             <div>
               <label className="block text-sm font-medium text-zinc-400">Role</label>
               <select value={formData.sexualRole} onChange={e => setFormData({...formData, sexualRole: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2">
@@ -235,7 +138,6 @@ export default function Onboarding() {
                 <option>Side</option>
               </select>
             </div>
-
             <div>
               <label className="block text-sm font-medium text-zinc-400">Primary Intent</label>
               <select value={formData.intent} onChange={e => setFormData({...formData, intent: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2">
@@ -245,30 +147,9 @@ export default function Onboarding() {
                 <option>Networking</option>
               </select>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-2">Looking For (pick all that apply)</label>
-              <div className="flex flex-wrap gap-2">
-                {PRESET_TAGS.map(tag => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => toggleTag(tag)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                      formData.tags.includes(tag)
-                        ? 'bg-rose-500 text-white'
-                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                    }`}
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <div>
               <label className="block text-sm font-medium text-zinc-400">Bio</label>
-              <textarea value={formData.bio} onChange={e => setFormData({...formData, bio: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2" rows={3} placeholder="Tell people about yourself..." />
+              <textarea value={formData.bio} onChange={e => setFormData({...formData, bio: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2" rows={3}></textarea>
             </div>
 
             <button
