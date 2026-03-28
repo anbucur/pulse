@@ -83,7 +83,7 @@ async function callMinimax(systemPrompt: string, userMessage: string): Promise<s
       'Authorization': `Bearer ${process.env.MINIMAX_API_KEY || ''}`,
     },
     body: JSON.stringify({
-      model: 'MiniMax-Text-01',
+      model: 'MiniMax-M2.7',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -106,7 +106,7 @@ async function callZai(systemPrompt: string, userMessage: string): Promise<strin
       'Authorization': `Bearer ${process.env.ZAI_API_KEY || ''}`,
     },
     body: JSON.stringify({
-      model: 'z1-preview',
+      model: 'glm-5',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
