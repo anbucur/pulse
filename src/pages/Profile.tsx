@@ -9,7 +9,7 @@ import Webcam from 'react-webcam';
 import { uploadMedia } from '../lib/uploadMedia';
 
 export default function Profile() {
-  const { user, logout, isPremium } = useAuth();
+  const { user, logout, isPremium, plan, tokenBalance } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [isGhostMode, setIsGhostMode] = useState(false);
   const [incognitoMode, setIncognitoMode] = useState(false);
@@ -25,6 +25,8 @@ export default function Profile() {
   const [albums, setAlbums] = useState<any[]>([]);
   const [showPulseUpgrade, setShowPulseUpgrade] = useState(false);
   const [upgradingPulse, setUpgradingPulse] = useState(false);
+  const [showProviderPlans, setShowProviderPlans] = useState(false);
+  const [upgradingProviderPlan, setUpgradingProviderPlan] = useState<string | null>(null);
   const [show2FA, setShow2FA] = useState(false);
   const [twoFAPhone, setTwoFAPhone] = useState('');
   const [showAITips, setShowAITips] = useState(false);
@@ -309,6 +311,29 @@ export default function Profile() {
       console.error('Error upgrading to Pulse+', e);
     } finally {
       setUpgradingPulse(false);
+    }
+  };
+
+  const handleUpgradeProviderPlan = async (planId: string) => {
+    if (!user) return;
+    setUpgradingProviderPlan(planId);
+    try {
+      const token = await user.getIdToken();
+      const resp = await fetch('/api/plan/upgrade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ planId }),
+      });
+      if (!resp.ok) throw new Error('Upgrade failed');
+      const data = await resp.json();
+      toast.success(`Plan upgraded! You have ${data.tokenBalance?.toLocaleString()} tokens.`);
+      setShowProviderPlans(false);
+      window.location.reload();
+    } catch (e) {
+      console.error('Error upgrading provider plan', e);
+      toast.error('Could not upgrade plan. Please try again.');
+    } finally {
+      setUpgradingProviderPlan(null);
     }
   };
 
@@ -1124,6 +1149,42 @@ export default function Profile() {
           </div>
         )}
 
+        {/* Provider Token Plans / Coding Plan */}
+        {plan === 'free' || plan === 'pulse_plus' ? (
+          <div className="bg-gradient-to-r from-violet-500/20 to-cyan-500/20 border border-violet-500/30 rounded-2xl p-6">
+            <div className="flex items-center mb-3">
+              <Sparkles className="w-6 h-6 text-violet-400 mr-2" />
+              <h3 className="text-lg font-bold text-white">AI Provider Plans</h3>
+            </div>
+            <p className="text-sm text-zinc-400 mb-4">Unlock premium AI features powered by Minimax, Anthropic Claude, or z.ai for coding.</p>
+            <button
+              onClick={() => setShowProviderPlans(true)}
+              className="w-full py-3 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-xl transition-colors"
+            >
+              View Plans
+            </button>
+          </div>
+        ) : (
+          <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center">
+                <Sparkles className="w-5 h-5 text-violet-400 mr-2" />
+                <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">AI Token Balance</h3>
+              </div>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 font-medium">
+                {plan === 'token_minimax' ? 'Minimax' : plan === 'token_anthropic' ? 'Anthropic' : 'z.ai Coding'}
+              </span>
+            </div>
+            <p className="text-2xl font-bold text-white">{tokenBalance.toLocaleString()} <span className="text-sm font-normal text-zinc-400">tokens remaining</span></p>
+            <button
+              onClick={() => setShowProviderPlans(true)}
+              className="mt-3 text-sm text-violet-400 hover:text-violet-300 transition-colors"
+            >
+              Change plan
+            </button>
+          </div>
+        )}
+
         {/* 2FA Section */}
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
           <div className="flex items-center justify-between mb-4">
@@ -1224,6 +1285,94 @@ export default function Profile() {
             <button onClick={() => setShowPulseUpgrade(false)} className="w-full mt-3 py-2 text-zinc-500 hover:text-zinc-300 text-sm transition-colors">
               Maybe later
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Provider Plans Modal */}
+      {showProviderPlans && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-zinc-900 w-full max-w-md rounded-3xl p-8 border border-violet-500/30 shadow-2xl my-4">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-white">AI Provider Plans</h2>
+                <p className="text-zinc-400 text-sm mt-1">Choose your AI engine</p>
+              </div>
+              <button onClick={() => setShowProviderPlans(false)} className="p-2 text-zinc-500 hover:text-zinc-300 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Minimax Token Plan */}
+              <div className="border border-zinc-700 rounded-2xl p-5 hover:border-violet-500/50 transition-colors">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="font-bold text-white">Minimax Token Plan</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">Powered by Minimax.io</p>
+                  </div>
+                  <span className="text-lg font-bold text-violet-300">$14.99<span className="text-xs font-normal text-zinc-400">/mo</span></span>
+                </div>
+                <ul className="text-sm text-zinc-400 space-y-1 mb-4">
+                  <li>🪙 5,000,000 tokens / month</li>
+                  <li>✍️ AI bio optimization (Minimax)</li>
+                  <li>🤖 Advanced AI matching features</li>
+                </ul>
+                <button
+                  onClick={() => handleUpgradeProviderPlan('token_minimax')}
+                  disabled={upgradingProviderPlan === 'token_minimax' || plan === 'token_minimax'}
+                  className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center"
+                >
+                  {plan === 'token_minimax' ? 'Current plan' : upgradingProviderPlan === 'token_minimax' ? <Loader2 className="animate-spin w-4 h-4" /> : 'Subscribe — $14.99/mo'}
+                </button>
+              </div>
+
+              {/* Anthropic Token Plan */}
+              <div className="border border-zinc-700 rounded-2xl p-5 hover:border-cyan-500/50 transition-colors">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="font-bold text-white">Anthropic Token Plan</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">Powered by Claude (Anthropic)</p>
+                  </div>
+                  <span className="text-lg font-bold text-cyan-300">$24.99<span className="text-xs font-normal text-zinc-400">/mo</span></span>
+                </div>
+                <ul className="text-sm text-zinc-400 space-y-1 mb-4">
+                  <li>🪙 1,000,000 tokens / month</li>
+                  <li>✍️ AI bio optimization (Claude)</li>
+                  <li>🧠 Highest quality AI responses</li>
+                </ul>
+                <button
+                  onClick={() => handleUpgradeProviderPlan('token_anthropic')}
+                  disabled={upgradingProviderPlan === 'token_anthropic' || plan === 'token_anthropic'}
+                  className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center"
+                >
+                  {plan === 'token_anthropic' ? 'Current plan' : upgradingProviderPlan === 'token_anthropic' ? <Loader2 className="animate-spin w-4 h-4" /> : 'Subscribe — $24.99/mo'}
+                </button>
+              </div>
+
+              {/* z.ai Coding Plan */}
+              <div className="border border-zinc-700 rounded-2xl p-5 hover:border-emerald-500/50 transition-colors">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="font-bold text-white">z.ai Coding Plan</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">Powered by z.ai</p>
+                  </div>
+                  <span className="text-lg font-bold text-emerald-300">$19.99<span className="text-xs font-normal text-zinc-400">/mo</span></span>
+                </div>
+                <ul className="text-sm text-zinc-400 space-y-1 mb-4">
+                  <li>🪙 2,000,000 tokens / month</li>
+                  <li>💻 Code review &amp; debugging assistant</li>
+                  <li>🛠️ Multi-language coding help</li>
+                </ul>
+                <button
+                  onClick={() => handleUpgradeProviderPlan('coding_zai')}
+                  disabled={upgradingProviderPlan === 'coding_zai' || plan === 'coding_zai'}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center"
+                >
+                  {plan === 'coding_zai' ? 'Current plan' : upgradingProviderPlan === 'coding_zai' ? <Loader2 className="animate-spin w-4 h-4" /> : 'Subscribe — $19.99/mo'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -23,6 +23,124 @@ try {
 // Initialize Gemini AI server-side (key never leaves the server)
 const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
+// -------------------------------------------------------------------------
+// Provider plan definitions
+// -------------------------------------------------------------------------
+export const PROVIDER_PLANS = {
+  token_minimax: {
+    label: 'Minimax Token Plan',
+    provider: 'minimax',
+    monthlyTokens: 5_000_000,
+    priceUsd: 14.99,
+  },
+  token_anthropic: {
+    label: 'Anthropic Token Plan',
+    provider: 'anthropic',
+    monthlyTokens: 1_000_000,
+    priceUsd: 24.99,
+  },
+  coding_zai: {
+    label: 'z.ai Coding Plan',
+    provider: 'zai',
+    monthlyTokens: 2_000_000,
+    priceUsd: 19.99,
+  },
+} as const;
+
+export type ProviderPlanId = keyof typeof PROVIDER_PLANS;
+
+// -------------------------------------------------------------------------
+// Provider helper: Anthropic (claude-3-5-haiku-20241022)
+// -------------------------------------------------------------------------
+async function callAnthropic(systemPrompt: string, userMessage: string): Promise<string> {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-3-5-haiku-20241022',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    }),
+  });
+  if (!response.ok) throw new Error(`Anthropic API error: ${response.status}`);
+  const data = await response.json() as any;
+  return data.content?.[0]?.text ?? '';
+}
+
+// -------------------------------------------------------------------------
+// Provider helper: Minimax.io (OpenAI-compatible endpoint)
+// -------------------------------------------------------------------------
+async function callMinimax(systemPrompt: string, userMessage: string): Promise<string> {
+  const response = await fetch('https://api.minimax.io/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.MINIMAX_API_KEY || ''}`,
+    },
+    body: JSON.stringify({
+      model: 'MiniMax-Text-01',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`Minimax API error: ${response.status}`);
+  const data = await response.json() as any;
+  return data.choices?.[0]?.message?.content ?? '';
+}
+
+// -------------------------------------------------------------------------
+// Provider helper: z.ai (OpenAI-compatible, coding-optimised)
+// -------------------------------------------------------------------------
+async function callZai(systemPrompt: string, userMessage: string): Promise<string> {
+  const response = await fetch('https://api.z.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.ZAI_API_KEY || ''}`,
+    },
+    body: JSON.stringify({
+      model: 'z1-preview',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`z.ai API error: ${response.status}`);
+  const data = await response.json() as any;
+  return data.choices?.[0]?.message?.content ?? '';
+}
+
+// -------------------------------------------------------------------------
+// Token tracking: deduct tokens from user's balance in Firestore
+// Returns false if insufficient balance
+// -------------------------------------------------------------------------
+async function deductTokens(uid: string, tokensUsed: number): Promise<boolean> {
+  const userRef = admin.firestore().collection('users').doc(uid);
+  try {
+    await admin.firestore().runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      const balance: number = snap.data()?.tokenBalance ?? 0;
+      if (balance < tokensUsed) throw new Error('insufficient_tokens');
+      tx.update(userRef, {
+        tokenBalance: balance - tokensUsed,
+        tokenUsed: (snap.data()?.tokenUsed ?? 0) + tokensUsed,
+      });
+    });
+    return true;
+  } catch (err: any) {
+    if (err.message === 'insufficient_tokens') return false;
+    throw err;
+  }
+}
+
 // Middleware: verify Firebase ID token sent from client
 async function verifyToken(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
@@ -287,6 +405,124 @@ async function startServer() {
       res.json(JSON.parse(response.text || '{"tips": []}'));
     } catch (error) {
       console.error("Error in /api/ai/profile-tips:", error);
+      res.status(500).json({ error: 'AI unavailable' });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Plan: Get current plan status and token balance
+  // -----------------------------------------------------------------------
+  app.get("/api/plan/status", verifyToken, async (req, res) => {
+    const uid = (req as any).uid as string;
+    try {
+      const snap = await admin.firestore().collection('users').doc(uid).get();
+      const data = snap.data() ?? {};
+      res.json({
+        plan: data.plan ?? 'free',
+        tokenBalance: data.tokenBalance ?? 0,
+        tokenUsed: data.tokenUsed ?? 0,
+      });
+    } catch (error) {
+      console.error('Error in /api/plan/status:', error);
+      res.status(500).json({ error: 'Failed to fetch plan status' });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Plan: Upgrade to a provider token plan
+  // -----------------------------------------------------------------------
+  app.post("/api/plan/upgrade", verifyToken, async (req, res) => {
+    const uid = (req as any).uid as string;
+    const { planId } = req.body as { planId: ProviderPlanId };
+    if (!PROVIDER_PLANS[planId]) {
+      res.status(400).json({ error: 'Unknown plan' });
+      return;
+    }
+    const plan = PROVIDER_PLANS[planId];
+    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    try {
+      await admin.firestore().collection('users').doc(uid).update({
+        plan: planId,
+        tokenBalance: plan.monthlyTokens,
+        tokenUsed: 0,
+        planExpiresAt: expiresAt,
+      });
+      res.json({ success: true, plan: planId, tokenBalance: plan.monthlyTokens });
+    } catch (error) {
+      console.error('Error in /api/plan/upgrade:', error);
+      res.status(500).json({ error: 'Failed to upgrade plan' });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // AI: Coding assistant (z.ai Coding Plan)
+  // -----------------------------------------------------------------------
+  app.post("/api/ai/coding", verifyToken, async (req, res) => {
+    const uid = (req as any).uid as string;
+    const { code, question, language } = req.body as { code?: string; question: string; language?: string };
+
+    // Verify user is on coding_zai plan
+    const userSnap = await admin.firestore().collection('users').doc(uid).get();
+    if (userSnap.data()?.plan !== 'coding_zai') {
+      res.status(403).json({ error: 'The z.ai Coding Plan is required for this feature.' });
+      return;
+    }
+
+    // Estimate token usage (rough: 4 chars ≈ 1 token)
+    const estimatedTokens = Math.ceil(((code?.length ?? 0) + question.length + 500) / 4);
+    const hasBalance = await deductTokens(uid, estimatedTokens);
+    if (!hasBalance) {
+      res.status(402).json({ error: 'Insufficient token balance. Please top up your plan.' });
+      return;
+    }
+
+    try {
+      const systemPrompt = `You are an expert software engineer and coding assistant. Provide clear, concise, and correct code help. When showing code use proper formatting.${language ? ` The user is working in ${language}.` : ''}`;
+      const userMessage = code
+        ? `Here is my code:\n\`\`\`${language ?? ''}\n${code}\n\`\`\`\n\nQuestion: ${question}`
+        : question;
+
+      const answer = await callZai(systemPrompt, userMessage);
+      res.json({ answer });
+    } catch (error) {
+      console.error('Error in /api/ai/coding:', error);
+      res.status(500).json({ error: 'Coding AI unavailable' });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // AI: Provider-aware bio optimizer (Minimax or Anthropic based on plan)
+  // -----------------------------------------------------------------------
+  app.post("/api/ai/optimize-bio-pro", verifyToken, async (req, res) => {
+    const uid = (req as any).uid as string;
+    const { bio, intent, sexualRole, age } = req.body;
+
+    const userSnap = await admin.firestore().collection('users').doc(uid).get();
+    const plan: string = userSnap.data()?.plan ?? 'free';
+
+    if (plan !== 'token_minimax' && plan !== 'token_anthropic') {
+      res.status(403).json({ error: 'A Minimax or Anthropic token plan is required.' });
+      return;
+    }
+
+    const estimatedTokens = Math.ceil(((bio?.length ?? 0) + 300) / 4);
+    const hasBalance = await deductTokens(uid, estimatedTokens);
+    if (!hasBalance) {
+      res.status(402).json({ error: 'Insufficient token balance. Please top up your plan.' });
+      return;
+    }
+
+    try {
+      const systemPrompt = 'You are a dating profile coach for a queer dating app called Pulse. Rewrite bios to be engaging, authentic, and concise (under 300 characters).';
+      const userMessage = `Bio: ${bio || 'None'}\nIntent: ${intent}\nRole: ${sexualRole}\nAge: ${age}\n\nRewrite the bio only. Output the bio text with no extra commentary.`;
+
+      const result = plan === 'token_minimax'
+        ? await callMinimax(systemPrompt, userMessage)
+        : await callAnthropic(systemPrompt, userMessage);
+
+      res.json({ bio: result.trim() || bio });
+    } catch (error) {
+      console.error('Error in /api/ai/optimize-bio-pro:', error);
       res.status(500).json({ error: 'AI unavailable' });
     }
   });
