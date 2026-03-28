@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot, getDocs, doc, setDoc, deleteDoc, updateDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs, doc, setDoc, deleteDoc, updateDoc, addDoc, documentId } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
@@ -47,44 +47,58 @@ export default function ChatList() {
       where('participants', 'array-contains', user.uid)
     );
 
+    // Batch profile fetching: collect all UIDs and fetch in one query (Firestore max 10 per 'in')
+    async function fetchProfilesBatch(uids: string[]): Promise<Record<string, any>> {
+      const profileMap: Record<string, any> = {};
+      if (uids.length === 0) return profileMap;
+      const chunks: string[][] = [];
+      for (let i = 0; i < uids.length; i += 10) chunks.push(uids.slice(i, i + 10));
+      await Promise.all(chunks.map(async (chunk) => {
+        const snap = await getDocs(query(collection(db, 'public_profiles'), where(documentId(), 'in', chunk)));
+        snap.docs.forEach(d => { profileMap[d.id] = d.data(); });
+      }));
+      return profileMap;
+    }
+
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const chatPromises = snapshot.docs.map(async (chatDoc) => {
-        const data = chatDoc.data();
-        const otherUid = data.participants.find((id: string) => id !== user.uid);
+      const chatDocs = snapshot.docs;
 
-        // Filter blocked users
-        if (otherUid && blockedUsers.includes(otherUid)) return null;
+      // Collect all other UIDs (excluding blocked)
+      const otherUids = chatDocs
+        .map(d => d.data().participants.find((id: string) => id !== user.uid))
+        .filter((uid): uid is string => !!uid && !blockedUsers.includes(uid));
 
-        let otherUser = null;
-        if (otherUid) {
-          const profileDoc = await getDocs(query(collection(db, 'public_profiles'), where('uid', '==', otherUid)));
-          if (!profileDoc.empty) {
-            otherUser = profileDoc.docs[0].data();
-          }
-        }
+      const profileMap = await fetchProfilesBatch(otherUids);
 
-        return { id: chatDoc.id, ...data, otherUser } as Chat;
-      });
+      const chats = chatDocs
+        .map((chatDoc) => {
+          const data = chatDoc.data();
+          const otherUid = data.participants.find((id: string) => id !== user.uid);
+          if (!otherUid || blockedUsers.includes(otherUid)) return null;
+          const otherUser = profileMap[otherUid] || null;
+          return { id: chatDoc.id, ...data, otherUser } as Chat;
+        })
+        .filter(Boolean) as Chat[];
 
-      const resolvedChats = (await Promise.all(chatPromises)).filter(Boolean) as Chat[];
-      setChats(resolvedChats);
+      setChats(chats);
       setLoading(false);
     });
 
-    // Fetch incoming chat requests (pending only)
+    // Fetch incoming chat requests (pending only) — also batch profile fetch
     const requestsQ = query(
       collection(db, 'chat_requests'),
       where('to', '==', user.uid),
       where('status', '==', 'pending')
     );
     const requestsUnsub = onSnapshot(requestsQ, async (snap) => {
-      const requests = await Promise.all(snap.docs.map(async (d) => {
+      const fromUids = snap.docs.map(d => d.data().from);
+      const profileMap = await fetchProfilesBatch(fromUids);
+      const requests = snap.docs.map((d) => {
         const data = d.data();
-        const profileDoc = await getDocs(query(collection(db, 'public_profiles'), where('uid', '==', data.from)));
-        const fromProfile = profileDoc.empty ? null : profileDoc.docs[0].data();
+        const fromProfile = profileMap[data.from] || null;
         return { id: d.id, ...data, fromProfile } as ChatRequest;
-      }));
-      setChatRequests(requests.filter(r => r.fromProfile));
+      }).filter(r => r.fromProfile);
+      setChatRequests(requests);
     });
 
     return () => {

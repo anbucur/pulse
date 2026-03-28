@@ -1,17 +1,18 @@
-/// <reference types="vite/client" />
 import React, { useEffect, useState } from 'react';
 import { collection, query, onSnapshot, where, getDocs, addDoc, serverTimestamp, updateDoc, doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Search, Zap, MapPin, Filter, MessageCircle, Map as MapIcon, Grid as GridIcon, X, Sparkles, Radio, Flame, ShieldCheck, Heart, ThumbsUp, Dog, Ban, AlertTriangle, PlusCircle, Crown } from 'lucide-react';
 import { sendNotification } from '../lib/notifications';
-import { GoogleGenAI } from '@google/genai';
+import { callAI } from '../lib/ai';
+import { toast } from '../lib/toast';
 import { useNavigate } from 'react-router-dom';
 import { uploadMedia } from '../lib/uploadMedia';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import 'leaflet.heat';
+import MatchModal from '../components/MatchModal';
 
 // Fix leaflet icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -20,8 +21,6 @@ L.Icon.Default.mergeOptions({
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 interface Profile {
   uid: string;
@@ -55,6 +54,8 @@ interface Profile {
   travelCity?: string;
   tags?: string[];
   tribes?: string[];
+  moodColor?: string;
+  moodExpiresAt?: number;
 }
 
 function HeatmapLayer({ points }: { points: [number, number, number][] }) {
@@ -106,6 +107,7 @@ export default function Grid() {
   const [storyFile, setStoryFile] = useState<File | null>(null);
   const [uploadingStory, setUploadingStory] = useState(false);
   const [selectedPhotoIdx, setSelectedPhotoIdx] = useState(0);
+  const [matchedProfile, setMatchedProfile] = useState<Profile | null>(null);
 
   useEffect(() => {
     if (!user || !selectedProfile) {
@@ -259,45 +261,28 @@ export default function Grid() {
     
     setIsSearching(true);
     try {
-      // Use Gemini to parse the query and filter profiles
-      const profileData = JSON.stringify(profiles.map(p => ({
+      const profileData = profiles.map(p => ({
         uid: p.uid,
         age: p.age,
         role: p.sexualRole,
         intent: p.intent,
         bio: p.bio,
         isLive: p.livePulseExpiresAt && p.livePulseExpiresAt > Date.now()
-      })));
+      }));
 
-      const prompt = `
-        You are an AI matchmaking assistant for a dating app.
-        User query: "${searchQuery}"
-        
-        Available profiles:
-        ${profileData}
-        
-        Return a JSON array of 'uid' strings that best match the query. Only return the JSON array, no markdown formatting.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-        }
+      const matchedUids = await callAI<string[]>('/api/ai/search', {
+        searchQuery,
+        profiles: profileData,
       });
 
-      const matchedUids = JSON.parse(response.text || "[]");
-      
-      // Reorder profiles to put matched ones at the top
       setProfiles(prev => {
         const matched = prev.filter(p => matchedUids.includes(p.uid));
         const unmatched = prev.filter(p => !matchedUids.includes(p.uid));
         return [...matched, ...unmatched];
       });
-
     } catch (error) {
       console.error("Error during semantic search", error);
+      toast.error("Search failed. Please try again.");
     } finally {
       setIsSearching(false);
     }
@@ -308,32 +293,14 @@ export default function Grid() {
     setCalculatingVibe(true);
     setVibeMatch(null);
     try {
-      const prompt = `
-        Analyze these two dating profiles and calculate a "Vibe Match" score from 1 to 100.
-        Provide a 1-sentence explanation of why they match or don't match.
-        
-        User 1 (Me):
-        Intent: ${myProfile.intent}
-        Role: ${myProfile.sexualRole}
-        Bio: ${myProfile.bio || 'None'}
-        
-        User 2 (Them):
-        Intent: ${otherProfile.intent}
-        Role: ${otherProfile.sexualRole}
-        Bio: ${otherProfile.bio || 'None'}
-        
-        Return JSON format: {"score": 85, "reason": "You both want to grab drinks right now and love techno."}
-      `;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
+      const result = await callAI<{ score: number; reason: string }>('/api/ai/vibe-match', {
+        myProfile: { intent: myProfile.intent, sexualRole: myProfile.sexualRole, bio: myProfile.bio },
+        otherProfile: { intent: otherProfile.intent, sexualRole: otherProfile.sexualRole, bio: otherProfile.bio },
       });
-
-      setVibeMatch(JSON.parse(response.text || '{"score": 50, "reason": "Could be a match!"}'));
+      setVibeMatch(result);
     } catch (error) {
       console.error("Error calculating vibe match", error);
+      setVibeMatch({ score: 50, reason: "Could be a match!" });
     } finally {
       setCalculatingVibe(false);
     }
@@ -376,10 +343,29 @@ export default function Grid() {
     try {
       if (!isLiked) {
         await setDoc(doc(db, `likes/${user.uid}/sent/${profileId}`), { sentAt: Date.now() });
-        // Check mutual match
+        // Check for mutual match
         const mutualSnap = await getDoc(doc(db, `likes/${profileId}/sent/${user.uid}`));
         if (mutualSnap.exists()) {
-          alert("It's a mutual match! 🎉");
+          // Show animated match modal and auto-create an accepted chat
+          const likedProfile = profiles.find(p => p.uid === profileId) || selectedProfile;
+          if (likedProfile) setMatchedProfile(likedProfile);
+          // Auto-create chat so they can message immediately
+          const { addDoc, collection: col } = await import('firebase/firestore');
+          const existingChatSnap = await getDocs(query(
+            col(db, 'chats'),
+            where('participants', 'array-contains', user.uid)
+          ));
+          const alreadyHasChat = existingChatSnap.docs.some(d => {
+            const parts = d.data().participants as string[];
+            return parts.includes(profileId);
+          });
+          if (!alreadyHasChat) {
+            await addDoc(col(db, 'chats'), {
+              participants: [user.uid, profileId],
+              updatedAt: Date.now(),
+              lastMessage: '',
+            });
+          }
           sendNotification(profileId, "It's a match! 🎉", `You and ${myProfile?.displayName || 'someone'} liked each other!`);
           sendNotification(user.uid, "It's a match! 🎉", "You have a new mutual match!");
         } else {
@@ -388,6 +374,7 @@ export default function Grid() {
       }
     } catch (e) {
       console.error("Error toggling like", e);
+      toast.error("Could not save like. Please try again.");
     }
   };
 
@@ -701,6 +688,14 @@ export default function Grid() {
                 {/* Live Pulse Halo */}
                 {isLive && (
                   <div className="absolute inset-0 border-2 border-rose-500 rounded-xl shadow-[inset_0_0_20px_rgba(244,63,94,0.3)] pointer-events-none"></div>
+                )}
+
+                {/* Mood Ring */}
+                {profile.moodColor && profile.moodExpiresAt && profile.moodExpiresAt > Date.now() && !isLive && (
+                  <div
+                    className="absolute inset-0 rounded-xl pointer-events-none"
+                    style={{ boxShadow: `inset 0 0 0 3px ${profile.moodColor}, inset 0 0 16px ${profile.moodColor}55` }}
+                  ></div>
                 )}
 
                 {/* Gradient Overlay */}
@@ -1216,6 +1211,15 @@ export default function Grid() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Mutual Match Modal */}
+      {matchedProfile && myProfile && (
+        <MatchModal
+          myProfile={myProfile}
+          matchedProfile={matchedProfile}
+          onClose={() => setMatchedProfile(null)}
+        />
       )}
     </div>
   );

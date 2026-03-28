@@ -1,4 +1,3 @@
-/// <reference types="vite/client" />
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, increment } from 'firebase/firestore';
@@ -6,12 +5,11 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { ArrowLeft, Send, Image as ImageIcon, Sparkles, Loader2, Bot, Camera, X, Eye, EyeOff, Mic, Square, Trash2, Bookmark } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { GoogleGenAI } from '@google/genai';
+import { callAI } from '../lib/ai';
+import { toast } from '../lib/toast';
 import Webcam from 'react-webcam';
 import { uploadMedia } from '../lib/uploadMedia';
 import { deleteDoc } from 'firebase/firestore';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 interface Message {
   id: string;
@@ -379,36 +377,15 @@ export default function Chat() {
   const generateIcebreaker = async () => {
     if (!myProfile || !otherUser) return;
     setIsGeneratingIcebreaker(true);
-    
     try {
-      const prompt = `
-        You are an AI wingman for a dating app called Pulse.
-        Generate a short, engaging, and contextual icebreaker message for me to send to this user.
-        
-        My Profile:
-        Intent: ${myProfile.intent}
-        Role: ${myProfile.sexualRole}
-        Bio: ${myProfile.bio}
-        
-        Their Profile:
-        Name: ${otherUser.displayName}
-        Intent: ${otherUser.intent}
-        Role: ${otherUser.sexualRole}
-        Bio: ${otherUser.bio}
-        
-        Return ONLY the text of the suggested message. Keep it under 150 characters. Be casual and direct.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+      const result = await callAI<{ text: string }>('/api/ai/icebreaker', {
+        myProfile: { displayName: myProfile.displayName, intent: myProfile.intent, sexualRole: myProfile.sexualRole, bio: myProfile.bio },
+        otherProfile: { displayName: otherUser.displayName, intent: otherUser.intent, sexualRole: otherUser.sexualRole, bio: otherUser.bio },
       });
-
-      if (response.text) {
-        setNewMessage(response.text.trim().replace(/^["']|["']$/g, ''));
-      }
+      if (result.text) setNewMessage(result.text);
     } catch (error) {
       console.error("Error generating icebreaker:", error);
+      toast.error("Could not generate icebreaker. Try again.");
     } finally {
       setIsGeneratingIcebreaker(false);
     }
@@ -417,41 +394,20 @@ export default function Chat() {
   const generateReply = async () => {
     if (!myProfile || !otherUser || messages.length === 0) return;
     setIsGeneratingReply(true);
-    
     try {
-      const recentMessages = messages.slice(-5).map(m => 
+      const recentMessages = messages.slice(-5).map(m =>
         `${m.senderId === user?.uid ? 'Me' : otherUser.displayName}: ${m.text || (m.isViewOnce ? '[Photo]' : '')}`
       ).join('\n');
 
-      const prompt = `
-        You are an AI wingman for a dating app called Pulse.
-        Generate a short, engaging reply for me to send based on the recent conversation history.
-        
-        My Profile:
-        Intent: ${myProfile.intent}
-        Role: ${myProfile.sexualRole}
-        
-        Their Profile:
-        Name: ${otherUser.displayName}
-        Intent: ${otherUser.intent}
-        Role: ${otherUser.sexualRole}
-        
-        Recent Conversation:
-        ${recentMessages}
-        
-        Return ONLY the text of the suggested reply. Keep it under 150 characters. Match the tone of the conversation.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+      const result = await callAI<{ text: string }>('/api/ai/reply-suggest', {
+        myProfile: { intent: myProfile.intent, sexualRole: myProfile.sexualRole },
+        otherProfile: { displayName: otherUser.displayName, intent: otherUser.intent, sexualRole: otherUser.sexualRole },
+        recentMessages,
       });
-
-      if (response.text) {
-        setNewMessage(response.text.trim().replace(/^["']|["']$/g, ''));
-      }
+      if (result.text) setNewMessage(result.text);
     } catch (error) {
       console.error("Error generating reply:", error);
+      toast.error("Could not generate reply suggestion. Try again.");
     } finally {
       setIsGeneratingReply(false);
     }

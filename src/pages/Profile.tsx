@@ -1,10 +1,10 @@
-/// <reference types="vite/client" />
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc, updateDoc, setDoc, deleteDoc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
-import { LogOut, Edit3, Settings, ShieldCheck, EyeOff, MapPin, Radio, Sparkles, Loader2, Camera, X, CheckCircle, Zap, Eye, Dog, Image as ImageIcon, Video, Crown, Phone } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
+import { LogOut, Edit3, Settings, ShieldCheck, EyeOff, MapPin, Radio, Sparkles, Loader2, Camera, X, CheckCircle, Zap, Eye, Dog, Image as ImageIcon, Video, Crown, Phone, Lightbulb } from 'lucide-react';
+import { callAI } from '../lib/ai';
+import { toast } from '../lib/toast';
 import Webcam from 'react-webcam';
 import { uploadMedia } from '../lib/uploadMedia';
 
@@ -27,6 +27,11 @@ export default function Profile() {
   const [upgradingPulse, setUpgradingPulse] = useState(false);
   const [show2FA, setShow2FA] = useState(false);
   const [twoFAPhone, setTwoFAPhone] = useState('');
+  const [showAITips, setShowAITips] = useState(false);
+  const [aiTips, setAITips] = useState<{ field: string; suggestion: string; newValue?: string }[]>([]);
+  const [loadingTips, setLoadingTips] = useState(false);
+  const [showMoodPicker, setShowMoodPicker] = useState(false);
+  const [activeMoodColor, setActiveMoodColor] = useState<string | null>(null);
   const webcamRef = useRef<Webcam>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -45,6 +50,8 @@ export default function Profile() {
         setBroadcast(data.broadcast || '');
         setTravelLat(data.lat?.toString() || '');
         setTravelLng(data.lng?.toString() || '');
+        const moodStillActive = data.moodColor && data.moodExpiresAt && data.moodExpiresAt > Date.now();
+        setActiveMoodColor(moodStillActive ? data.moodColor : null);
       }
     };
     fetchProfile();
@@ -92,7 +99,7 @@ export default function Profile() {
       });
     } catch (error) {
       console.error('Error uploading album photo:', error);
-      alert('Failed to upload album photo.');
+      toast.error('Failed to upload photo. Please try again.');
     } finally {
       setUploadingMedia(false);
       if (albumInputRef.current) albumInputRef.current.value = '';
@@ -241,26 +248,18 @@ export default function Profile() {
     if (!user || !profile) return;
     setOptimizing(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const prompt = `Rewrite this dating app bio to be more engaging, attractive, and tailored to their intent. Keep it under 300 characters.
-      Current Bio: ${profile.bio || 'None'}
-      Intent: ${profile.intent}
-      Role: ${profile.sexualRole}
-      Age: ${profile.age}`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
+      const result = await callAI<{ bio: string }>('/api/ai/optimize-bio', {
+        bio: profile.bio,
+        intent: profile.intent,
+        sexualRole: profile.sexualRole,
+        age: profile.age,
       });
-
-      const newBio = response.text?.trim() || profile.bio;
-      await updateDoc(doc(db, 'public_profiles', user.uid), {
-        bio: newBio
-      });
+      const newBio = result.bio || profile.bio;
+      await updateDoc(doc(db, 'public_profiles', user.uid), { bio: newBio });
       setProfile({ ...profile, bio: newBio });
     } catch (error) {
       console.error('Error optimizing profile:', error);
-      alert('Failed to optimize profile.');
+      toast.error('Failed to optimize bio. Please try again.');
     } finally {
       setOptimizing(false);
     }
@@ -275,30 +274,9 @@ export default function Profile() {
     setVerifying(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      // Extract base64 data
       const base64Data = imageSrc.split(',')[1];
+      const result = await callAI<{ verified: boolean; reason: string }>('/api/ai/verify-photo', { base64Data });
 
-      const prompt = `
-        Analyze this selfie for a dating app profile verification.
-        Does this image contain a clear, well-lit human face?
-        Return a JSON object with 'verified' (boolean) and 'reason' (string).
-      `;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: {
-          parts: [
-            { text: prompt },
-            { inlineData: { data: base64Data, mimeType: 'image/jpeg' } }
-          ]
-        },
-        config: { responseMimeType: "application/json" }
-      });
-
-      const result = JSON.parse(response.text || '{"verified": false, "reason": "Failed to parse"}');
-      
       if (result.verified) {
         await updateDoc(doc(db, 'public_profiles', user.uid), { isVerified: true });
         await updateDoc(doc(db, 'users', user.uid), { isVerified: true });
@@ -332,6 +310,52 @@ export default function Profile() {
     } finally {
       setUpgradingPulse(false);
     }
+  };
+
+  const fetchAITips = async () => {
+    if (!profile) return;
+    setLoadingTips(true);
+    setShowAITips(true);
+    try {
+      const result = await callAI<{ tips: { field: string; suggestion: string; newValue?: string }[] }>(
+        '/api/ai/profile-tips',
+        { profile }
+      );
+      setAITips(result.tips || []);
+    } catch (error) {
+      console.error('Error fetching AI tips:', error);
+      setAITips([{ field: 'general', suggestion: 'Failed to load tips. Please try again.' }]);
+    } finally {
+      setLoadingTips(false);
+    }
+  };
+
+  const applyAITip = async (tip: { field: string; newValue?: string }) => {
+    if (!user || !tip.newValue) return;
+    try {
+      if (tip.field === 'bio') {
+        await updateDoc(doc(db, 'public_profiles', user.uid), { bio: tip.newValue });
+        setProfile({ ...profile, bio: tip.newValue });
+      }
+      setAITips(prev => prev.filter(t => t.field !== tip.field || t.newValue !== tip.newValue));
+    } catch (error) {
+      console.error('Error applying AI tip:', error);
+    }
+  };
+
+  const setMoodRing = async (color: string | null) => {
+    if (!user) return;
+    try {
+      const moodExpiresAt = color ? Date.now() + 4 * 60 * 60 * 1000 : null; // 4 hours
+      await updateDoc(doc(db, 'public_profiles', user.uid), {
+        moodColor: color,
+        moodExpiresAt,
+      });
+      setActiveMoodColor(color);
+    } catch (error) {
+      console.error('Error setting mood:', error);
+    }
+    setShowMoodPicker(false);
   };
 
   const seedDemoProfiles = async () => {
@@ -461,6 +485,42 @@ export default function Profile() {
           </div>
         )}
 
+        {/* Mood Ring */}
+        <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">Mood Ring</h3>
+            <span className="text-xs text-zinc-500">Visible to everyone · expires in 4h</span>
+          </div>
+          <div className="flex items-center space-x-3 flex-wrap gap-y-2">
+            {[
+              { color: '#ef4444', label: 'Available Now' },
+              { color: '#eab308', label: 'Just Browsing' },
+              { color: '#22c55e', label: 'Open to Dates' },
+              { color: '#3b82f6', label: 'Socializing' },
+              { color: '#a855f7', label: 'Adventurous' },
+            ].map(({ color, label }) => (
+              <button
+                key={color}
+                onClick={() => setMoodRing(activeMoodColor === color ? null : color)}
+                title={label}
+                className={`w-9 h-9 rounded-full border-4 transition-all ${activeMoodColor === color ? 'scale-125 border-white' : 'border-transparent'}`}
+                style={{ backgroundColor: color }}
+              />
+            ))}
+            {activeMoodColor && (
+              <button
+                onClick={() => setMoodRing(null)}
+                className="text-xs text-zinc-500 hover:text-zinc-300 ml-2"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          {activeMoodColor && (
+            <p className="text-xs text-zinc-500 mt-2">Mood ring active — showing on your profile card</p>
+          )}
+        </div>
+
         {/* Intent */}
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
           <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-2">Primary Intent</h3>
@@ -473,17 +533,67 @@ export default function Profile() {
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
           <div className="flex justify-between items-center mb-2">
             <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-wider">About Me</h3>
-            <button 
-              onClick={handleOptimizeProfile}
-              disabled={optimizing}
-              className="flex items-center text-xs text-rose-500 hover:text-rose-400 disabled:opacity-50"
-            >
-              {optimizing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
-              AI Polish
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={fetchAITips}
+                disabled={loadingTips}
+                className="flex items-center text-xs text-amber-500 hover:text-amber-400 disabled:opacity-50"
+                title="Get AI profile improvement tips"
+              >
+                {loadingTips ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Lightbulb className="w-3 h-3 mr-1" />}
+                AI Tips
+              </button>
+              <button
+                onClick={handleOptimizeProfile}
+                disabled={optimizing}
+                className="flex items-center text-xs text-rose-500 hover:text-rose-400 disabled:opacity-50"
+              >
+                {optimizing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+                AI Polish
+              </button>
+            </div>
           </div>
           <p className="text-zinc-300 leading-relaxed">{profile.bio || "No bio provided."}</p>
         </div>
+
+        {/* AI Profile Tips */}
+        {showAITips && (
+          <div className="bg-zinc-900 rounded-2xl p-6 border border-amber-500/30">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-wider flex items-center">
+                <Lightbulb className="w-4 h-4 mr-2" /> AI Profile Tips
+              </h3>
+              <button onClick={() => setShowAITips(false)} className="text-zinc-500 hover:text-zinc-300">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {loadingTips ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
+                <span className="ml-2 text-zinc-400 text-sm">Analyzing your profile...</span>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {aiTips.map((tip, i) => (
+                  <div key={i} className="bg-zinc-800 rounded-xl p-4 border border-zinc-700">
+                    <p className="text-zinc-300 text-sm mb-2">{tip.suggestion}</p>
+                    {tip.newValue && tip.field === 'bio' && (
+                      <button
+                        onClick={() => applyAITip(tip)}
+                        className="text-xs bg-amber-500 hover:bg-amber-600 text-black font-medium px-3 py-1 rounded-full transition-colors"
+                      >
+                        Apply suggestion
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {aiTips.length === 0 && !loadingTips && (
+                  <p className="text-zinc-500 text-sm text-center">Your profile looks great! No major improvements needed.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Tags & Tribes */}
         <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
