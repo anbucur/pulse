@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { handleFirestoreError, OperationType } from '../lib/firestoreError';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
@@ -31,7 +32,7 @@ export default function ChatList() {
     const pinnedUnsub = onSnapshot(collection(db, `pinned_chats/${user.uid}/chats`), (snapshot) => {
       setPinnedChats(snapshot.docs.map(doc => doc.id));
     }, (error) => {
-      console.error("Error fetching pinned chats:", error);
+      handleFirestoreError(error, OperationType.LIST, `pinned_chats/${user.uid}/chats`);
     });
 
     const q = query(
@@ -46,9 +47,13 @@ export default function ChatList() {
         
         let otherUser = null;
         if (otherUid) {
-          const profileDoc = await getDocs(query(collection(db, 'public_profiles'), where('uid', '==', otherUid)));
-          if (!profileDoc.empty) {
-            otherUser = profileDoc.docs[0].data();
+          try {
+            const profileDoc = await getDocs(query(collection(db, 'public_profiles'), where('uid', '==', otherUid)));
+            if (!profileDoc.empty) {
+              otherUser = profileDoc.docs[0].data();
+            }
+          } catch (error) {
+            handleFirestoreError(error, OperationType.GET, 'public_profiles');
           }
         }
 
@@ -62,6 +67,8 @@ export default function ChatList() {
       const resolvedChats = await Promise.all(chatPromises);
       setChats(resolvedChats);
       setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'chats');
     });
 
     return () => {

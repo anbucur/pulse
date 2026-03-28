@@ -57,6 +57,8 @@ export default function Chat() {
     const unsubscribePhrases = onSnapshot(collection(db, `saved_phrases/${user.uid}/phrases`), (snapshot) => {
       const phrases = snapshot.docs.map(doc => ({ id: doc.id, text: doc.data().text }));
       setSavedPhrases(phrases);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `saved_phrases/${user.uid}/phrases`);
     });
     return () => unsubscribePhrases();
   }, [user]);
@@ -66,18 +68,22 @@ export default function Chat() {
 
     // Fetch both profiles for AI context
     const fetchProfiles = async () => {
-      const myDoc = await getDoc(doc(db, 'public_profiles', user.uid));
-      if (myDoc.exists()) setMyProfile(myDoc.data());
+      try {
+        const myDoc = await getDoc(doc(db, 'public_profiles', user.uid));
+        if (myDoc.exists()) setMyProfile(myDoc.data());
 
-      const chatDoc = await getDoc(doc(db, 'chats', chatId));
-      if (chatDoc.exists()) {
-        const otherUid = chatDoc.data().participants.find((id: string) => id !== user.uid);
-        if (otherUid) {
-          const profileDoc = await getDoc(doc(db, 'public_profiles', otherUid));
-          if (profileDoc.exists()) {
-            setOtherUser(profileDoc.data());
+        const chatDoc = await getDoc(doc(db, 'chats', chatId));
+        if (chatDoc.exists()) {
+          const otherUid = chatDoc.data().participants.find((id: string) => id !== user.uid);
+          if (otherUid) {
+            const profileDoc = await getDoc(doc(db, 'public_profiles', otherUid));
+            if (profileDoc.exists()) {
+              setOtherUser(profileDoc.data());
+            }
           }
         }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, `public_profiles or chats/${chatId}`);
       }
     };
     fetchProfiles();
@@ -93,6 +99,8 @@ export default function Chat() {
           setOtherUserTyping(false);
         }
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `chats/${chatId}`);
     });
 
     // Listen for messages
@@ -125,7 +133,7 @@ export default function Chat() {
               isRead: true
             });
           } catch (error) {
-            console.error("Error marking message as read:", error);
+            handleFirestoreError(error, OperationType.UPDATE, `chats/${chatId}/messages/${msgId}`);
           }
         });
 
@@ -135,9 +143,11 @@ export default function Chat() {
             [`unreadCount.${user.uid}`]: 0
           });
         } catch (error) {
-          console.error("Error resetting unread count:", error);
+          handleFirestoreError(error, OperationType.UPDATE, `chats/${chatId}`);
         }
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
     });
 
     return () => {
