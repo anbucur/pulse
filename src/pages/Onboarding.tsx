@@ -1,33 +1,27 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { doc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { Camera, CheckCircle2, Loader2 } from 'lucide-react';
 
 export default function Onboarding() {
-  const { user, hasProfile, checkProfileStatus } = useAuth();
+  const { user, checkProfileStatus } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     displayName: '',
     age: '',
-    height: '',
-    weight: '',
     sexualRole: 'Versatile',
     intent: 'Chat',
     bio: '',
   });
 
   if (!user) return <Navigate to="/login" />;
-  if (hasProfile) return <Navigate to="/" />;
 
   const handleVerify = async () => {
     setLoading(true);
     // Simulate AI verification
-    setTimeout(async () => {
-      await setDoc(doc(db, 'users', user.uid), { isVerified: true }, { merge: true });
+    setTimeout(() => {
       setStep(2);
       setLoading(false);
     }, 2000);
@@ -39,28 +33,33 @@ export default function Onboarding() {
 
     const createProfile = async (latitude: number, longitude: number) => {
       try {
-        await setDoc(doc(db, 'public_profiles', user.uid), {
-          uid: user.uid,
-          displayName: formData.displayName,
-          age: parseInt(formData.age) || 18,
-          height: parseInt(formData.height) || 0,
-          weight: parseInt(formData.weight) || 0,
-          sexualRole: formData.sexualRole,
-          intent: formData.intent,
-          bio: formData.bio,
-          lat: latitude,
-          lng: longitude,
-          lastActive: Date.now(),
-          tags: [],
-          tribes: [],
-          photoURL: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`
+        const token = localStorage.getItem('token');
+        const response = await fetch('/api/profiles/me', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            display_name: formData.displayName,
+            age: parseInt(formData.age) || 18,
+            sexual_role: [formData.sexualRole],
+            intent: [formData.intent],
+            bio: formData.bio,
+            lat: latitude,
+            lng: longitude,
+            interests: [],
+            tags: [],
+          }),
         });
 
-        await checkProfileStatus(user.uid);
+        if (!response.ok) throw new Error('Failed to create profile');
+
+        await checkProfileStatus(user.id);
         navigate('/');
       } catch (error) {
-        console.error("Error creating profile", error);
-        alert("Failed to create profile. Please try again.");
+        console.error('Error creating profile', error);
+        alert('Failed to create profile. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -72,14 +71,12 @@ export default function Onboarding() {
           createProfile(position.coords.latitude, position.coords.longitude);
         },
         (error) => {
-          console.warn("Error getting location, using default", error);
-          // Default to a central location (e.g., San Francisco) if location fails
+          console.warn('Error getting location, using default', error);
           createProfile(37.7749, -122.4194);
         },
-        { timeout: 10000 } // Add a timeout so it doesn't hang forever
+        { timeout: 10000 }
       );
     } else {
-      console.warn("Geolocation not supported, using default");
       createProfile(37.7749, -122.4194);
     }
   };
@@ -115,28 +112,20 @@ export default function Onboarding() {
               <label className="block text-sm font-medium text-zinc-400">Display Name</label>
               <input required type="text" value={formData.displayName} onChange={e => setFormData({...formData, displayName: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2" />
             </div>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-zinc-400">Age</label>
                 <input required type="number" min="18" value={formData.age} onChange={e => setFormData({...formData, age: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-400">Height (cm)</label>
-                <input type="number" value={formData.height} onChange={e => setFormData({...formData, height: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2" />
+                <label className="block text-sm font-medium text-zinc-400">Role</label>
+                <select value={formData.sexualRole} onChange={e => setFormData({...formData, sexualRole: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2">
+                  <option>Top</option>
+                  <option>Versatile</option>
+                  <option>Bottom</option>
+                  <option>Side</option>
+                </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-400">Weight (kg)</label>
-                <input type="number" value={formData.weight} onChange={e => setFormData({...formData, weight: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2" />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-400">Role</label>
-              <select value={formData.sexualRole} onChange={e => setFormData({...formData, sexualRole: e.target.value})} className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2">
-                <option>Top</option>
-                <option>Versatile</option>
-                <option>Bottom</option>
-                <option>Side</option>
-              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-zinc-400">Primary Intent</label>

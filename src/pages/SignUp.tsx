@@ -4,7 +4,8 @@ import { Navigate, Link } from 'react-router-dom';
 import { Activity, Loader2 } from 'lucide-react';
 
 export default function SignUp() {
-  const { user, signUpWithEmail, signInWithGoogle } = useAuth();
+  const { user, signUpWithEmail } = useAuth();
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -23,21 +24,9 @@ export default function SignUp() {
     setError('');
     setLoading(true);
     try {
-      await signUpWithEmail(email, password);
+      await signUpWithEmail(email, password, displayName || undefined);
     } catch (err: any) {
       setError(err.message || 'Failed to create an account');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setError('');
-    setLoading(true);
-    try {
-      await signInWithGoogle();
-    } catch (err: any) {
-      setError(err.message || 'Failed to sign in with Google');
     } finally {
       setLoading(false);
     }
@@ -64,33 +53,43 @@ export default function SignUp() {
 
         <form onSubmit={handleEmailSignUp} className="space-y-4">
           <div>
+            <label className="block text-sm font-medium text-zinc-400">Display Name</label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Optional"
+              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500"
+            />
+          </div>
+          <div>
             <label className="block text-sm font-medium text-zinc-400">Email</label>
-            <input 
-              type="email" 
-              required 
+            <input
+              type="email"
+              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500" 
+              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-400">Password</label>
-            <input 
-              type="password" 
-              required 
+            <input
+              type="password"
+              required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500" 
+              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-400">Confirm Password</label>
-            <input 
-              type="password" 
-              required 
+            <input
+              type="password"
+              required
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500" 
+              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500"
             />
           </div>
           <button
@@ -101,23 +100,6 @@ export default function SignUp() {
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Sign Up'}
           </button>
         </form>
-
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-zinc-700"></div>
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-zinc-900 text-zinc-500">Or continue with</span>
-          </div>
-        </div>
-
-        <button
-          onClick={handleGoogleLogin}
-          disabled={loading}
-          className="w-full flex items-center justify-center px-4 py-3 border border-zinc-700 text-base font-medium rounded-full text-white bg-zinc-800 hover:bg-zinc-700 transition-colors disabled:opacity-50"
-        >
-          Google
-        </button>
 
         <p className="text-center text-sm text-zinc-400">
           Already have an account? <Link to="/login" className="text-rose-500 hover:text-rose-400 font-medium">Log in</Link>

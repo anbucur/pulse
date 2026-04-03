@@ -1,0 +1,157 @@
+import express from 'express';
+import { createServer } from 'http';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import cors from 'cors';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
+import { createServer as createViteServer } from 'vite';
+
+import { pool, initializeMinIO, initializeMeilisearch } from './config/index.js';
+import { notFound, errorHandler } from './utils/errors.js';
+import { createWebSocketServer } from './websocket/index.js';
+
+// Routes
+import authRoutes from './routes/auth.js';
+import profileRoutes from './routes/profiles.js';
+import storageRoutes from './routes/storage.js';
+import searchRoutes from './routes/search.js';
+import aiRoutes from './routes/ai.js';
+import chatRoutes from './routes/chat.js';
+import featureRoutes from './routes/features.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const isProduction = process.env.NODE_ENV === 'production';
+
+async function startServer() {
+  const app = express();
+  const PORT = process.env.PORT || 3000;
+
+  // Security middleware
+  app.use(helmet({
+    contentSecurityPolicy: false, // Disabled for development
+  }));
+
+  // CORS
+  app.use(cors({
+    origin: process.env.CORS_ORIGIN || '*',
+    credentials: true,
+  }));
+
+  // Body parsing
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(cookieParser());
+
+  // Rate limiting
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP',
+  });
+
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5, // Lower limit for auth endpoints
+    skipSuccessfulRequests: true,
+  });
+
+  app.use('/api/', limiter);
+  app.use('/api/auth/', authLimiter);
+
+  // Health check
+  app.get('/api/health', async (req, res) => {
+    try {
+      // Check database connection
+      await pool.query('SELECT 1');
+
+      res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        services: {
+          database: 'connected',
+          redis: 'connected',
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'error',
+        message: 'Service unhealthy',
+      });
+    }
+  });
+
+  // API Routes
+  app.use('/api/auth', authRoutes);
+  app.use('/api/profiles', profileRoutes);
+  app.use('/api/storage', storageRoutes);
+  app.use('/api/search', searchRoutes);
+  app.use('/api/ai', aiRoutes);
+  app.use('/api/chat', chatRoutes);
+  app.use('/api/features', featureRoutes);
+
+  // Create HTTP server
+  const server = createServer(app);
+
+  // WebSocket server
+  const wss = createWebSocketServer(server);
+
+  // Make wss accessible to routes
+  app.set('wss', wss);
+
+  // Vite middleware for development
+  if (!isProduction) {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+
+    app.use(vite.middlewares);
+  } else {
+    // Serve static files in production
+    const distPath = join(__dirname, '../dist');
+    app.use(express.static(distPath));
+
+    // SPA fallback
+    app.get('*', (req, res) => {
+      res.sendFile(join(distPath, 'index.html'));
+    });
+  }
+
+  // Error handling
+  app.use(notFound);
+  app.use(errorHandler);
+
+  // Initialize services
+  try {
+    await initializeMinIO();
+    await initializeMeilisearch();
+    console.log('Services initialized successfully');
+  } catch (error) {
+    console.error('Error initializing services:', error);
+  }
+
+  // Start server
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully...');
+    server.close(() => {
+      console.log('Server closed');
+      pool.end(() => {
+        console.log('Database pool closed');
+        process.exit(0);
+      });
+    });
+  });
+}
+
+startServer().catch((error) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
+});

@@ -2,11 +2,9 @@ import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate, Link } from 'react-router-dom';
 import { Activity, Loader2 } from 'lucide-react';
-import { doc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 
 export default function Login() {
-  const { user, signInWithGoogle, signInWithEmail, signUpWithEmail, checkProfileStatus } = useAuth();
+  const { user, signInWithEmail, signUpWithEmail, checkProfileStatus } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -29,18 +27,6 @@ export default function Login() {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setError('');
-    setLoading(true);
-    try {
-      await signInWithGoogle();
-    } catch (err: any) {
-      setError(err.message || 'Failed to sign in with Google');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleDemoLogin = async () => {
     setError('');
     setLoading(true);
@@ -48,44 +34,40 @@ export default function Login() {
       const randomNum = Math.floor(Math.random() * 100000);
       const demoEmail = `demo${randomNum}@pulse.app`;
       const demoPassword = 'DemoPassword123!';
-      
-      const cred = await signUpWithEmail(demoEmail, demoPassword);
-      const uid = cred.user.uid;
-      
+
       const names = ["Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Jamie", "Quinn"];
       const intents = ["Right Now", "Dates", "Chat", "Networking"];
       const roles = ["Top", "Versatile", "Bottom", "Side"];
-      
-      const randomName = names[Math.floor(Math.random() * names.length)] + " " + randomNum.toString().slice(0,2);
+
+      const randomName = names[Math.floor(Math.random() * names.length)] + " " + randomNum.toString().slice(0, 2);
       const randomIntent = intents[Math.floor(Math.random() * intents.length)];
       const randomRole = roles[Math.floor(Math.random() * roles.length)];
       const randomAge = Math.floor(Math.random() * 20) + 20;
-      
-      await setDoc(doc(db, 'users', uid), {
-        uid,
-        email: demoEmail,
-        role: 'user',
-        isVerified: true
+
+      const result = await signUpWithEmail(demoEmail, demoPassword, randomName);
+
+      // Update profile with demo data
+      const token = localStorage.getItem('token');
+      await fetch('/api/profiles/me', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          age: randomAge,
+          sexual_role: [randomRole],
+          intent: [randomIntent],
+          bio: `Hey! I'm a demo user generated for testing. I'm looking for ${randomIntent}.`,
+          lat: 37.7749 + (Math.random() * 0.1 - 0.05),
+          lng: -122.4194 + (Math.random() * 0.1 - 0.05),
+          tags: ['Demo'],
+          interests: ['Testing', 'Demo'],
+          display_name: randomName,
+        }),
       });
 
-      await setDoc(doc(db, 'public_profiles', uid), {
-        uid,
-        displayName: randomName,
-        age: randomAge,
-        height: 175,
-        weight: 75,
-        sexualRole: randomRole,
-        intent: randomIntent,
-        bio: `Hey! I'm a demo user generated for testing. I'm looking for ${randomIntent}.`,
-        lat: 37.7749 + (Math.random() * 0.1 - 0.05),
-        lng: -122.4194 + (Math.random() * 0.1 - 0.05),
-        lastActive: Date.now(),
-        tags: ['Demo'],
-        tribes: [],
-        photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`
-      });
-      
-      await checkProfileStatus(uid);
+      await checkProfileStatus(result.user.id);
     } catch (err: any) {
       setError('Failed to create demo account: ' + err.message);
     } finally {
@@ -115,12 +97,12 @@ export default function Login() {
         <form onSubmit={handleEmailLogin} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-zinc-400">Email</label>
-            <input 
-              type="email" 
-              required 
+            <input
+              type="email"
+              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500" 
+              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500"
             />
           </div>
           <div>
@@ -128,12 +110,12 @@ export default function Login() {
               <label className="block text-sm font-medium text-zinc-400">Password</label>
               <Link to="/forgot-password" className="text-xs text-rose-500 hover:text-rose-400">Forgot password?</Link>
             </div>
-            <input 
-              type="password" 
-              required 
+            <input
+              type="password"
+              required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500" 
+              className="mt-1 block w-full rounded-md bg-zinc-800 border-zinc-700 text-white px-3 py-2 focus:ring-rose-500 focus:border-rose-500"
             />
           </div>
           <button
@@ -150,23 +132,15 @@ export default function Login() {
             <div className="w-full border-t border-zinc-700"></div>
           </div>
           <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-zinc-900 text-zinc-500">Or continue with</span>
+            <span className="px-2 bg-zinc-900 text-zinc-500">Or</span>
           </div>
         </div>
-
-        <button
-          onClick={handleGoogleLogin}
-          disabled={loading}
-          className="w-full flex items-center justify-center px-4 py-3 border border-zinc-700 text-base font-medium rounded-full text-white bg-zinc-800 hover:bg-zinc-700 transition-colors disabled:opacity-50"
-        >
-          Google
-        </button>
 
         <button
           onClick={handleDemoLogin}
           disabled={loading}
           type="button"
-          className="w-full flex items-center justify-center px-4 py-3 border border-rose-500/50 text-base font-medium rounded-full text-rose-500 bg-rose-500/10 hover:bg-rose-500/20 transition-colors disabled:opacity-50 mt-4"
+          className="w-full flex items-center justify-center px-4 py-3 border border-rose-500/50 text-base font-medium rounded-full text-rose-500 bg-rose-500/10 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
         >
           Try Demo Mode (Mock User)
         </button>

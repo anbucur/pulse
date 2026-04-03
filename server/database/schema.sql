@@ -1,0 +1,463 @@
+-- Pulse Database Schema for PostgreSQL
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Users table
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    display_name VARCHAR(100),
+    is_verified BOOLEAN DEFAULT false,
+    is_premium BOOLEAN DEFAULT false,
+    role VARCHAR(50) DEFAULT 'user',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login_at TIMESTAMP,
+    fcm_token VARCHAR(500),
+    push_subscription JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
+
+-- Profiles table (rich profile data)
+CREATE TABLE IF NOT EXISTS profiles (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+
+    -- Basic Info
+    display_name VARCHAR(100),
+    age INTEGER,
+    gender VARCHAR(50),
+    pronouns VARCHAR(100),
+    bio TEXT,
+    location VARCHAR(500),
+    lat DECIMAL(10, 8),
+    lng DECIMAL(11, 8),
+
+    -- Physical Attributes
+    height VARCHAR(20),
+    body_type VARCHAR(50),
+    hair_color VARCHAR(50),
+    eye_color VARCHAR(50),
+    ethnicity VARCHAR(100),
+
+    -- Sexual Profile
+    sexual_orientation VARCHAR(100)[],
+    relationship_status VARCHAR(50),
+    relationship_style VARCHAR(100)[],
+    sexual_role VARCHAR(100)[],
+    experience_level VARCHAR(50),
+    std_friendly BOOLEAN DEFAULT false,
+    vaccinated BOOLEAN DEFAULT false,
+
+    -- Kink Profile
+    kinks JSONB,
+    kink_preferences JSONB,
+
+    -- Lifestyle
+    education VARCHAR(100),
+    occupation VARCHAR(100),
+    income_level VARCHAR(50),
+    smoking_habit VARCHAR(50),
+    drinking_habit VARCHAR(50),
+    exercise_habit VARCHAR(50),
+    diet VARCHAR(50),
+
+    -- Personality
+    mbti VARCHAR(10),
+    love_languages VARCHAR(100)[],
+    attachment_style VARCHAR(50),
+    communication_style VARCHAR(50),
+
+    -- Interests & Tags
+    interests VARCHAR(200)[],
+    hobbies TEXT[],
+    tags VARCHAR(200)[],
+
+    -- Looking For
+    intent VARCHAR(100)[],
+    looking_for_age_range INTEGER[],
+    looking_for_gender VARCHAR(100)[],
+    looking_for_location_radius INTEGER,
+
+    -- Privacy Settings (per-field privacy)
+    privacy_settings JSONB,
+
+    -- Media
+    photos TEXT[],
+    primary_photo_index INTEGER DEFAULT 0,
+    video_url TEXT,
+    album_photos JSONB,
+
+    -- Verification
+    is_verified BOOLEAN DEFAULT false,
+    verification_method VARCHAR(100),
+    verified_at TIMESTAMP,
+
+    -- Premium Features
+    is_ghost_mode BOOLEAN DEFAULT false,
+    incognito_mode BOOLEAN DEFAULT false,
+    boost_expires_at TIMESTAMP,
+    broadcast TEXT,
+    broadcast_expires_at TIMESTAMP,
+
+    -- Metadata
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    profile_views INTEGER DEFAULT 0,
+    search_appears INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_profiles_location ON profiles(lat, lng);
+CREATE INDEX IF NOT EXISTS idx_profiles_tags ON profiles USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_profiles_interests ON profiles USING GIN (interests);
+CREATE INDEX IF NOT EXISTS idx_profiles_gender ON profiles(gender);
+CREATE INDEX IF NOT EXISTS idx_profiles_orientation ON profiles USING GIN (sexual_orientation);
+
+-- Compatibility Matrix
+CREATE TABLE IF NOT EXISTS compatibility_matrices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    target_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    communication_score INTEGER,
+    lifestyle_score INTEGER,
+    values_score INTEGER,
+    intimacy_score INTEGER,
+    conflict_resolution_score INTEGER,
+    growth_score INTEGER,
+
+    overall_score INTEGER,
+
+    strengths TEXT[],
+    potential_challenges TEXT[],
+    recommendations TEXT[],
+
+    calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(user_id, target_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_compatibility_user ON compatibility_matrices(user_id);
+CREATE INDEX IF NOT EXISTS idx_compatibility_target ON compatibility_matrices(target_user_id);
+CREATE INDEX IF NOT EXISTS idx_compatibility_overall ON compatibility_matrices(overall_score);
+
+-- Consent Protocols
+CREATE TABLE IF NOT EXISTS consent_protocols (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    target_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    boundaries JSONB,
+    safe_words VARCHAR(100)[],
+    check_in_frequency VARCHAR(50),
+    first_meeting_preference VARCHAR(100),
+    meeting_constraints TEXT[],
+
+    std_status VARCHAR(100),
+    last_test_date DATE,
+    birth_control VARCHAR(100),
+    protection_required BOOLEAN DEFAULT true,
+
+    status VARCHAR(50) DEFAULT 'draft',
+    responded_at TIMESTAMP,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(user_id, target_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_consent_user ON consent_protocols(user_id);
+CREATE INDEX IF NOT EXISTS idx_consent_status ON consent_protocols(status);
+
+-- Vibe Checks (temporal mood/intent status)
+CREATE TABLE IF NOT EXISTS vibe_checks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+
+    current_mood VARCHAR(100)[],
+    current_intent VARCHAR(100)[],
+    availability VARCHAR(50),
+
+    activity_status VARCHAR(100),
+    activity_description TEXT,
+
+    social_battery INTEGER,
+
+    expires_at TIMESTAMP,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_vibe_user ON vibe_checks(user_id);
+CREATE INDEX IF NOT EXISTS idx_vibe_expires ON vibe_checks(expires_at);
+CREATE INDEX IF NOT EXISTS idx_vibe_mood ON vibe_checks USING GIN (current_mood);
+
+-- Burner Chat Rooms
+CREATE TABLE IF NOT EXISTS burner_chats (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    room_name VARCHAR(200),
+    max_lifetime INTEGER,
+    max_messages INTEGER,
+
+    encryption_key TEXT,
+
+    destruct_on_read BOOLEAN DEFAULT false,
+    destruct_timer INTEGER,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_burner_expires ON burner_chats(expires_at);
+CREATE INDEX IF NOT EXISTS idx_burner_created_by ON burner_chats(created_by);
+
+-- Burner Chat Participants
+CREATE TABLE IF NOT EXISTS burner_chat_participants (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    chat_id UUID REFERENCES burner_chats(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    public_key TEXT,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    left_at TIMESTAMP,
+
+    UNIQUE(chat_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_burner_participants_chat ON burner_chat_participants(chat_id);
+CREATE INDEX IF NOT EXISTS idx_burner_participants_user ON burner_chat_participants(user_id);
+
+-- Burner Chat Messages
+CREATE TABLE IF NOT EXISTS burner_chat_messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    chat_id UUID REFERENCES burner_chats(id) ON DELETE CASCADE,
+    sender_id UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    encrypted_content TEXT NOT NULL,
+    nonce TEXT,
+
+    view_count INTEGER DEFAULT 0,
+    max_views INTEGER DEFAULT 1,
+
+    destruct_at TIMESTAMP,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_burner_messages_chat ON burner_chat_messages(chat_id);
+CREATE INDEX IF NOT EXISTS idx_burner_messages_destruct ON burner_chat_messages(destruct_at);
+
+-- Social Proof References
+CREATE TABLE IF NOT EXISTS social_references (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    from_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    about_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    reference_type VARCHAR(50),
+    interaction_date DATE,
+
+    is_anonymous BOOLEAN DEFAULT true,
+
+    respect_rating INTEGER,
+    communication_rating INTEGER,
+    safety_rating INTEGER,
+    satisfaction_rating INTEGER,
+    overall_rating INTEGER,
+
+    would_meet_again BOOLEAN,
+    feedback TEXT,
+    strengths TEXT[],
+    areas_for_improvement TEXT[],
+    flags VARCHAR(100)[],
+
+    is_mutual BOOLEAN DEFAULT false,
+    confirmed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(from_user_id, about_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_references_about ON social_references(about_user_id);
+CREATE INDEX IF NOT EXISTS idx_references_from ON social_references(from_user_id);
+CREATE INDEX IF NOT EXISTS idx_references_type ON social_references(reference_type);
+CREATE INDEX IF NOT EXISTS idx_references_rating ON social_references(overall_rating);
+
+-- Chat Rooms (persistent chats)
+CREATE TABLE IF NOT EXISTS chat_rooms (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    participants UUID[] NOT NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    last_message_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    typing JSONB,
+    unread_counts JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_participants ON chat_rooms USING GIN (participants);
+CREATE INDEX IF NOT EXISTS idx_chat_last_message ON chat_rooms(last_message_at);
+
+-- Chat Messages
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    room_id UUID REFERENCES chat_rooms(id) ON DELETE CASCADE,
+    sender_id UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    text TEXT,
+    media_url TEXT,
+    media_type VARCHAR(50),
+
+    is_view_once BOOLEAN DEFAULT false,
+    viewed_at TIMESTAMP,
+    reply_to UUID REFERENCES chat_messages(id) ON DELETE SET NULL,
+
+    reactions JSONB,
+    is_read BOOLEAN DEFAULT false,
+    read_by UUID[],
+    is_view_once_viewed BOOLEAN DEFAULT false,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    edited_at TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_room ON chat_messages(room_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_sender ON chat_messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at);
+
+-- Profile Views
+CREATE TABLE IF NOT EXISTS profile_views (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    viewer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    profile_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_profile_views_profile ON profile_views(profile_id);
+CREATE INDEX IF NOT EXISTS idx_profile_views_viewer ON profile_views(viewer_id);
+CREATE INDEX IF NOT EXISTS idx_profile_views_date ON profile_views(viewed_at);
+
+-- Taps (likes, super likes, etc)
+CREATE TABLE IF NOT EXISTS taps (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    from_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    to_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    tap_type VARCHAR(50),
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(from_user_id, to_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_taps_from ON taps(from_user_id);
+CREATE INDEX IF NOT EXISTS idx_taps_to ON taps(to_user_id);
+CREATE INDEX IF NOT EXISTS idx_taps_type ON taps(tap_type);
+
+-- Blocks
+CREATE TABLE IF NOT EXISTS blocks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    blocker_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    blocked_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    blocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reason VARCHAR(200),
+
+    UNIQUE(blocker_id, blocked_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blocks_blocker ON blocks(blocker_id);
+CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id);
+
+-- Matches (mutual likes)
+CREATE TABLE IF NOT EXISTS matches (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user1_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    user2_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    matched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(user1_id, user2_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_matches_user1 ON matches(user1_id);
+CREATE INDEX IF NOT EXISTS idx_matches_user2 ON matches(user2_id);
+
+-- Notifications
+CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(100),
+    title VARCHAR(200),
+    body TEXT,
+    data JSONB,
+    is_read BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
+
+-- Saved Phrases (for quick replies)
+CREATE TABLE IF NOT EXISTS saved_phrases (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    category VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_phrases_user ON saved_phrases(user_id);
+
+-- Audit Log
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    action VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(100),
+    resource_id UUID,
+    details JSONB,
+    ip_address VARCHAR(50),
+    user_agent TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
+
+-- Create a function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Apply the trigger to relevant tables
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_consent_protocols_updated_at BEFORE UPDATE ON consent_protocols
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_vibe_checks_updated_at BEFORE UPDATE ON vibe_checks
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_social_references_updated_at BEFORE UPDATE ON social_references
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_chat_rooms_updated_at BEFORE UPDATE ON chat_rooms
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
