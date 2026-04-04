@@ -16,29 +16,29 @@ CREATE TABLE IF NOT EXISTS profile_milestones (
   badge_url TEXT,
   is_active BOOLEAN DEFAULT true,
   sort_order INTEGER DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- User milestone progress and achievements
 CREATE TABLE IF NOT EXISTS user_milestones (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   milestone_id INTEGER NOT NULL REFERENCES profile_milestones(id) ON DELETE CASCADE,
   achieved_at TIMESTAMP,
   reward_claimed BOOLEAN DEFAULT false,
   reward_claimed_at TIMESTAMP,
   reward_expires_at TIMESTAMP,
   progress_data JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, milestone_id)
 );
 
 -- Profile completion snapshots (track over time)
 CREATE TABLE IF NOT EXISTS completion_snapshots (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   completion_percent INTEGER CHECK (completion_percent BETWEEN 0 AND 100),
   filled_fields TEXT[],
   missing_fields TEXT[],
@@ -47,47 +47,47 @@ CREATE TABLE IF NOT EXISTS completion_snapshots (
   has_interests BOOLEAN DEFAULT false,
   has_location BOOLEAN DEFAULT false,
   verification_level VARCHAR(20) DEFAULT 'none' CHECK (verification_level IN ('none', 'email', 'phone', 'photo', 'id')),
-  calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  calculated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Rewards granted to users
 CREATE TABLE IF NOT EXISTS completion_rewards (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   milestone_id INTEGER REFERENCES profile_milestones(id) ON DELETE SET NULL,
   reward_type VARCHAR(30) NOT NULL,
   reward_value INTEGER DEFAULT 0,
   reward_status VARCHAR(20) DEFAULT 'active' CHECK (reward_status IN ('pending', 'active', 'expired', 'revoked')),
-  granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  granted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   expires_at TIMESTAMP,
   used_value INTEGER DEFAULT 0,
   metadata JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Daily reward tracking (prevent farming)
 CREATE TABLE IF NOT EXISTS daily_reward_tracking (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reward_date DATE NOT NULL DEFAULT CURRENT_DATE,
   rewards_claimed INTEGER DEFAULT 0,
   completion_percent_at_claim INTEGER DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, reward_date)
 );
 
 -- Streak tracking for consistent profile completion
 CREATE TABLE IF NOT EXISTS completion_streaks (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   current_streak_days INTEGER DEFAULT 0,
   longest_streak_days INTEGER DEFAULT 0,
   last_completion_update_at TIMESTAMP,
   streak_milestone_7 BOOLEAN DEFAULT false,
   streak_milestone_30 BOOLEAN DEFAULT false,
   streak_milestone_100 BOOLEAN DEFAULT false,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance

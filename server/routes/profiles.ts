@@ -28,7 +28,7 @@ router.get('/me', asyncHandler(async (req: AuthRequest, res) => {
   }
 
   res.json(result.rows[0]);
-});
+}));
 
 // Get profile by ID (public view with privacy applied)
 router.get('/:userId', asyncHandler(async (req: AuthRequest, res) => {

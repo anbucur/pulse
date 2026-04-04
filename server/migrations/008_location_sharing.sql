@@ -3,7 +3,7 @@
 -- Trusted contacts (friends who can receive location)
 CREATE TABLE IF NOT EXISTS trusted_contacts (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   contact_name VARCHAR(100) NOT NULL,
   contact_phone VARCHAR(20),
   contact_email VARCHAR(255),
@@ -16,24 +16,24 @@ CREATE TABLE IF NOT EXISTS trusted_contacts (
   verification_method VARCHAR(30),
   notes TEXT,
   active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Active location sharing sessions
 CREATE TABLE IF NOT EXISTS location_shares (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   share_name VARCHAR(100),
   share_type VARCHAR(30) DEFAULT 'date' CHECK (share_type IN ('date', 'travel', 'emergency', 'manual', 'indefinite')),
   is_active BOOLEAN DEFAULT true,
-  share_started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  share_started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   share_ends_at TIMESTAMP,
   date_partner_id INTEGER REFERENCES users(id),
   date_location VARCHAR(255),
   emergency_broadcast BOOLEAN DEFAULT false,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Location updates during active sharing
@@ -49,13 +49,13 @@ CREATE TABLE IF NOT EXISTS location_updates (
   battery_level INTEGER,
   is_moving BOOLEAN DEFAULT false,
   location_source VARCHAR(30) DEFAULT 'gps',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Check-in requests
 CREATE TABLE IF NOT EXISTS check_in_requests (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   requested_by_contact_id INTEGER REFERENCES trusted_contacts(id) ON DELETE SET NULL,
   request_type VARCHAR(30) DEFAULT 'manual' CHECK (request_type IN ('manual', 'scheduled', 'automated')),
   scheduled_for TIMESTAMP,
@@ -64,8 +64,8 @@ CREATE TABLE IF NOT EXISTS check_in_requests (
   status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'overdue', 'cancelled')),
   reminder_sent BOOLEAN DEFAULT false,
   completed_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Check-in responses
@@ -77,13 +77,13 @@ CREATE TABLE IF NOT EXISTS check_in_responses (
   latitude DECIMAL(10, 8),
   longitude DECIMAL(11, 8),
   response_method VARCHAR(30) DEFAULT 'manual',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Emergency broadcasts
 CREATE TABLE IF NOT EXISTS emergency_broadcasts (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   share_id INTEGER REFERENCES location_shares(id) ON DELETE SET NULL,
   broadcast_type VARCHAR(30) DEFAULT 'sos' CHECK (broadcast_type IN ('sos', 'danger', 'medical', 'check_in_failed')),
   message TEXT,
@@ -95,8 +95,8 @@ CREATE TABLE IF NOT EXISTS emergency_broadcasts (
   status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'resolved', 'false_alarm')),
   resolved_at TIMESTAMP,
   resolution_notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Emergency broadcast notifications to contacts
@@ -110,13 +110,13 @@ CREATE TABLE IF NOT EXISTS emergency_notifications (
   sent_at TIMESTAMP,
   delivered_at TIMESTAMP,
   error_message TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Scheduled location sharing rules
 CREATE TABLE IF NOT EXISTS scheduled_sharing_rules (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   rule_name VARCHAR(100) NOT NULL,
   start_time TIME NOT NULL,
   end_time TIME NOT NULL,
@@ -125,19 +125,19 @@ CREATE TABLE IF NOT EXISTS scheduled_sharing_rules (
   share_with_verified_contacts BOOLEAN DEFAULT true,
   share_with_contacts INTEGER[],
   active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Location sharing history (audit log)
 CREATE TABLE IF NOT EXISTS location_sharing_history (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   share_id INTEGER REFERENCES location_shares(id) ON DELETE SET NULL,
   action VARCHAR(50) NOT NULL,
   details JSONB,
   ip_address VARCHAR(45),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance

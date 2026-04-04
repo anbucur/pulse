@@ -28,15 +28,15 @@ CREATE TABLE IF NOT EXISTS date_plans (
   completed_at TIMESTAMP,
   cancelled_at TIMESTAMP,
   cancellation_reason TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   CHECK (user1_id < user2_id)
 );
 
 -- Availability slots (when users are free for dates)
 CREATE TABLE IF NOT EXISTS availability_slots (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   slot_type VARCHAR(20) DEFAULT 'available' CHECK (slot_type IN ('available', 'busy', 'preferred')),
   start_time TIMESTAMP NOT NULL,
   end_time TIMESTAMP NOT NULL,
@@ -46,8 +46,8 @@ CREATE TABLE IF NOT EXISTS availability_slots (
   priority INTEGER DEFAULT 5 CHECK (priority >= 1 AND priority <= 10),
   notes TEXT,
   is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   CHECK (end_time > start_time)
 );
 
@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS date_suggestions (
   image_url VARCHAR(500),
   is_active BOOLEAN DEFAULT true,
   popularity_score INTEGER DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Date plan messages (communication within date planning)
@@ -95,14 +95,14 @@ CREATE TABLE IF NOT EXISTS date_plan_messages (
   content TEXT,
   metadata JSONB, -- { new_time: "2025-01-15 19:00", new_location: "Cafe X" }
   read_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Date feedback and ratings
 CREATE TABLE IF NOT EXISTS date_feedback (
   id SERIAL PRIMARY KEY,
   plan_id INTEGER NOT NULL REFERENCES date_plans(id) ON DELETE CASCADE,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   overall_rating INTEGER CHECK (overall_rating >= 1 AND overall_rating <= 5),
   location_rating INTEGER CHECK (location_rating >= 1 AND overall_rating <= 5),
   conversation_rating INTEGER CHECK (conversation_rating >= 1 AND conversation_rating <= 5),
@@ -114,14 +114,14 @@ CREATE TABLE IF NOT EXISTS date_feedback (
   could_improve TEXT[],
   actual_cost DECIMAL(10, 2),
   actual_duration_minutes INTEGER,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(plan_id, user_id)
 );
 
 -- Calendar sync connections
 CREATE TABLE IF NOT EXISTS calendar_connections (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   provider VARCHAR(20) NOT NULL CHECK (provider IN ('google', 'apple', 'outlook')),
   access_token TEXT,
   refresh_token TEXT,
@@ -132,8 +132,8 @@ CREATE TABLE IF NOT EXISTS calendar_connections (
   auto_add_dates BOOLEAN DEFAULT true,
   last_synced_at TIMESTAMP,
   is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, provider)
 );
 
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS mutual_availability_cache (
   user2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   available_slots JSONB, -- Array of { start, end, priority }
   last_computed_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user1_id, user2_id),
   CHECK (user1_id < user2_id)
 );
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS mutual_availability_cache (
 -- Date planner statistics
 CREATE TABLE IF NOT EXISTS date_planner_stats (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   dates_proposed INTEGER DEFAULT 0,
   dates_confirmed INTEGER DEFAULT 0,
   dates_completed INTEGER DEFAULT 0,
@@ -165,8 +165,8 @@ CREATE TABLE IF NOT EXISTS date_planner_stats (
   average_response_time_hours DECIMAL(10, 2),
   most_common_date_type VARCHAR(50),
   last_date_activity_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance

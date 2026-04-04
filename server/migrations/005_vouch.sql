@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS vouch_tags (
   tag_category VARCHAR(30) CHECK (tag_category IN ('personality', 'behavior', 'skill', 'social', 'safety', 'other')),
   description TEXT,
   usage_count INTEGER DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Friend vouches (endorsements from friends)
@@ -22,8 +22,8 @@ CREATE TABLE IF NOT EXISTS friend_vouches (
   anonymous BOOLEAN DEFAULT false,
   status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'removed')),
   admin_reviewed_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(vouch_for_id, vouch_from_id)
 );
 
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS vouch_tag_connections (
   id SERIAL PRIMARY KEY,
   vouch_id INTEGER NOT NULL REFERENCES friend_vouches(id) ON DELETE CASCADE,
   tag_id INTEGER NOT NULL REFERENCES vouch_tags(id) ON DELETE CASCADE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(vouch_id, tag_id)
 );
 
@@ -44,8 +44,8 @@ CREATE TABLE IF NOT EXISTS vouch_requests (
   message TEXT,
   status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
   responded_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(requested_by_id, requested_from_id)
 );
 
@@ -53,15 +53,15 @@ CREATE TABLE IF NOT EXISTS vouch_requests (
 CREATE TABLE IF NOT EXISTS vouch_reactions (
   id SERIAL PRIMARY KEY,
   vouch_id INTEGER NOT NULL REFERENCES friend_vouches(id) ON DELETE CASCADE,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reaction_type VARCHAR(20) DEFAULT 'helpful' CHECK (reaction_type IN ('helpful', 'agree', 'insightful')),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(vouch_id, user_id)
 );
 
 -- Vouch statistics (aggregate data per user)
 CREATE TABLE IF NOT EXISTS vouch_stats (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   total_vouches_received INTEGER DEFAULT 0,
   total_vouches_given INTEGER DEFAULT 0,
   total_vouch_requests_sent INTEGER DEFAULT 0,
@@ -72,8 +72,8 @@ CREATE TABLE IF NOT EXISTS vouch_stats (
   verification_level VARCHAR(20) DEFAULT 'none' CHECK (verification_level IN ('none', 'basic', 'verified', 'highly_trusted')),
   last_vouch_received_at TIMESTAMP,
   last_vouch_given_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance

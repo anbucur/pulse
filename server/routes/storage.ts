@@ -1,12 +1,11 @@
 import { Router } from 'express';
-import multer from 'multer';
 import { asyncHandler, AppError } from '../utils/errors.js';
 import { minioClient } from '../config/index.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import crypto from 'crypto';
+import { upload, sanitizeFilename, getFileCategory, MAX_FILE_SIZE } from '../utils/fileValidation.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
 
 // All storage routes require authentication
 router.use(authenticate);
@@ -20,10 +19,28 @@ router.post('/upload', upload.single('file'), asyncHandler(async (req: AuthReque
   const { folder = 'uploads', isPublic = 'true', metadata } = req.body;
   const bucket = process.env.MINIO_BUCKET || 'pulse';
 
+  // Sanitize folder name to prevent path traversal
+  const sanitizedFolder = folder.replace(/[^a-zA-Z0-9_-]/g, '_') || 'uploads';
+
+  // Sanitize filename
+  const fileExtension = req.file.originalname.split('.').pop() || 'bin';
+  const sanitizedFilename = sanitizeFilename(req.file.originalname);
+
   // Generate unique key
-  const fileExtension = req.file.originalname.split('.').pop();
   const uniqueId = crypto.randomBytes(16).toString('hex');
-  const key = `${folder}/${req.userId}/${uniqueId}.${fileExtension}`;
+  const key = `${sanitizedFolder}/${req.userId}/${uniqueId}.${fileExtension}`;
+
+  // Validate file size
+  const category = getFileCategory(req.file.mimetype);
+  if (category) {
+    const maxSize = MAX_FILE_SIZE[category];
+    if (req.file.size > maxSize) {
+      throw new AppError(
+        `File size ${Math.round(req.file.size / 1024 / 1024)}MB exceeds maximum ${Math.round(maxSize / 1024 / 1024)}MB for ${category} files`,
+        400
+      );
+    }
+  }
 
   // Upload to MinIO
   await minioClient.putObject(bucket, key, req.file.buffer, {
@@ -39,6 +56,7 @@ router.post('/upload', upload.single('file'), asyncHandler(async (req: AuthReque
     key,
     size: req.file.size,
     contentType: req.file.mimetype,
+    filename: sanitizedFilename,
   });
 }));
 

@@ -257,7 +257,7 @@ export default function EventDiscovery({ onUserClick, onMessageClick }: EventDis
         await fetchEventDetails(eventId);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Check-in failed. Are you at the event location?' : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'Check-in failed. Are you at the event location?');
     }
   };
 

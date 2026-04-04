@@ -56,35 +56,84 @@ async function startServer() {
 
   // Security middleware
   app.use(helmet({
-    contentSecurityPolicy: false, // Disabled for development
+    contentSecurityPolicy: isProduction ? {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'", "https:"],
+        frameSrc: ["'none'"],
+      },
+    } : false,
+    hsts: isProduction ? {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    } : false,
   }));
 
-  // CORS
+  // CORS - stricter configuration
+  const allowedOrigins = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
+    : [process.env.CORS_ORIGIN || 'http://localhost:5173'];
+
   app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: function(origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   }));
 
   // Body parsing
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
 
   // Rate limiting
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // Limit each IP to 100 requests per windowMs
-    message: 'Too many requests from this IP',
+    message: { error: 'Too many requests from this IP, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
   });
 
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 5, // Lower limit for auth endpoints
-    skipSuccessfulRequests: true,
+    max: 5,
+    skipSuccessfulRequests: false, // Don't skip - count all attempts
+    message: { error: 'Too many authentication attempts, please try again later.' },
+  });
+
+  const uploadLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 20,
+    message: { error: 'Too many uploads, please try again later.' },
+  });
+
+  const aiLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 50,
+    message: { error: 'Too many AI requests, please try again later.' },
   });
 
   app.use('/api/', limiter);
   app.use('/api/auth/', authLimiter);
+  app.use('/api/storage/upload', uploadLimiter);
+  app.use('/api/ai/', aiLimiter);
 
   // Health check
   app.get('/api/health', async (req, res) => {

@@ -3,7 +3,7 @@
 -- User music profiles (aggregated data from music services)
 CREATE TABLE IF NOT EXISTS music_profiles (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   spotify_connected BOOLEAN DEFAULT false,
   apple_music_connected BOOLEAN DEFAULT false,
   top_artists TEXT[],
@@ -13,14 +13,14 @@ CREATE TABLE IF NOT EXISTS music_profiles (
   last_synced_at TIMESTAMP,
   sync_count INTEGER DEFAULT 0,
   display_music_data BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Music service connections (OAuth tokens and metadata)
 CREATE TABLE IF NOT EXISTS music_connections (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   service VARCHAR(20) NOT NULL CHECK (service IN ('spotify', 'apple_music')),
   access_token TEXT,
   refresh_token TEXT,
@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS music_connections (
   scope TEXT[],
   is_active BOOLEAN DEFAULT true,
   last_synced_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, service)
 );
 
@@ -51,8 +51,8 @@ CREATE TABLE IF NOT EXISTS music_matches (
   user1_interest BOOLEAN DEFAULT false,
   user2_interest BOOLEAN DEFAULT false,
   mutual_match BOOLEAN DEFAULT false,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user1_id, user2_id),
   CHECK (user1_id < user2_id)
 );
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS music_matches (
 -- Music mode discovery settings (user preferences for music-based matching)
 CREATE TABLE IF NOT EXISTS music_discovery_settings (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   music_mode_enabled BOOLEAN DEFAULT false,
   min_compatibility_score INTEGER DEFAULT 50 CHECK (min_compatibility_score >= 0 AND min_compatibility_score <= 100),
   preferred_genres TEXT[],
@@ -69,25 +69,25 @@ CREATE TABLE IF NOT EXISTS music_discovery_settings (
   genre_weight INTEGER DEFAULT 30 CHECK (genre_weight >= 0 AND genre_weight <= 100),
   artist_weight INTEGER DEFAULT 50 CHECK (artist_weight >= 0 AND artist_weight <= 100),
   audio_feature_weight INTEGER DEFAULT 20 CHECK (audio_feature_weight >= 0 AND audio_feature_weight <= 100),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Music interactions (likes, shares on music profiles)
 CREATE TABLE IF NOT EXISTS music_interactions (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  profile_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  profile_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   interaction_type VARCHAR(20) NOT NULL CHECK (interaction_type IN ('profile_view', 'artist_like', 'genre_like', 'music_message')),
   metadata JSONB, -- { artist: "Taylor Swift", genre: "Pop", message: "Great taste!" }
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   CHECK (user_id != profile_user_id)
 );
 
 -- Music taste statistics
 CREATE TABLE IF NOT EXISTS music_stats (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   total_matches INTEGER DEFAULT 0,
   mutual_matches INTEGER DEFAULT 0,
   profile_views INTEGER DEFAULT 0,
@@ -95,8 +95,8 @@ CREATE TABLE IF NOT EXISTS music_stats (
   most_matched_genres TEXT[],
   music_mode_used_count INTEGER DEFAULT 0,
   last_music_mode_used_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance

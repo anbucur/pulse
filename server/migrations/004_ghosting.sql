@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS ghosting_pledges (
   response_expectation_hours INTEGER DEFAULT 48 CHECK (response_expectation_hours IN (24, 48, 72)),
   both_agreed_at TIMESTAMP,
   pledge_active BOOLEAN DEFAULT false,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(match_id)
 );
 
@@ -32,13 +32,13 @@ CREATE TABLE IF NOT EXISTS response_nudges (
   is_automated BOOLEAN DEFAULT true,
   custom_message TEXT,
   response_triggered BOOLEAN DEFAULT false,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Ghosting metrics per user
 CREATE TABLE IF NOT EXISTS ghost_metrics (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   pledges_agreed INTEGER DEFAULT 0,
   pledges_broken INTEGER DEFAULT 0,
   pledge_compliance_rate DECIMAL(5,2) DEFAULT 100.00,
@@ -53,8 +53,8 @@ CREATE TABLE IF NOT EXISTS ghost_metrics (
   longest_streak_days INTEGER DEFAULT 0,
   reliability_score DECimal(5,2) DEFAULT 100.00,
   broken_pledge_incidents TEXT[] DEFAULT array[]::TEXT[],
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Message read receipts and timestamps
@@ -71,14 +71,14 @@ CREATE TABLE IF NOT EXISTS message_read_receipts (
 
 -- Last seen tracking
 CREATE TABLE IF NOT EXISTS user_last_seen (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   last_active_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_chat_opened_at TIMESTAMP,
   last_profile_view_at TIMESTAMP,
   is_online BOOLEAN DEFAULT false,
-  online_status_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  online_status_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance

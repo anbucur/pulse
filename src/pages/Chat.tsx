@@ -38,6 +38,8 @@ export default function Chat() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch messages
   const fetchMessages = useCallback(async () => {
@@ -50,7 +52,9 @@ export default function Chat() {
       if (response.ok) {
         const data = await response.json();
         setMessages(data.messages || []);
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        // Clear existing scroll timeout and set new one
+        if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -99,7 +103,9 @@ export default function Chat() {
 
     const unsubscribeMessage = chatProvider.onMessage(chatId, (message) => {
       setMessages(prev => [...prev, message]);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      // Clear existing scroll timeout and set new one
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
 
       // Mark as read
       if (user && message.senderId !== user.id) {
@@ -119,6 +125,21 @@ export default function Chat() {
     };
   }, [chatId, user]);
 
+  // Cleanup timeouts and intervals on unmount
+  useEffect(() => {
+    return () => {
+      // Clear all timeouts
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
+
+      // Stop media recorder and release stream
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
   // Fetch saved phrases
   useEffect(() => {
     if (!user) return;
@@ -135,7 +156,9 @@ export default function Chat() {
     setNewMessage(e.target.value);
     if (chatId) {
       chatProvider.sendTyping(chatId, true);
-      setTimeout(() => chatProvider.sendTyping(chatId, false), 2000);
+      // Clear existing timeout and set new one
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => chatProvider.sendTyping(chatId, false), 2000);
     }
   };
 

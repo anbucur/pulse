@@ -3,17 +3,17 @@
 -- User voice profile recordings
 CREATE TABLE IF NOT EXISTS voice_profiles (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   audio_url VARCHAR(500) NOT NULL,
   duration INTEGER NOT NULL CHECK (duration BETWEEN 1 AND 30),
-  recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   is_active BOOLEAN DEFAULT true,
   transcript TEXT,
   language VARCHAR(10) DEFAULT 'en',
   play_count INTEGER DEFAULT 0,
   last_played_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Voice profile interactions (who played whose voice)
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS voice_profile_plays (
   id SERIAL PRIMARY KEY,
   voice_profile_id INTEGER NOT NULL REFERENCES voice_profiles(id) ON DELETE CASCADE,
   listener_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  played_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   completed BOOLEAN DEFAULT true, -- Whether they listened to the full recording
   UNIQUE(voice_profile_id, listener_id)
 );
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS voice_profile_reactions (
   voice_profile_id INTEGER NOT NULL REFERENCES voice_profiles(id) ON DELETE CASCADE,
   reactor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reaction_type VARCHAR(20) NOT NULL CHECK (reaction_type IN ('heart', 'fire', 'laugh', 'thoughtful')),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(voice_profile_id, reactor_id, reaction_type)
 );
 

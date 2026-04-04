@@ -24,23 +24,23 @@ CREATE TABLE IF NOT EXISTS speed_dating_events (
   room_url VARCHAR(500),
   room_id VARCHAR(100),
   host_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Speed dating event participants
 CREATE TABLE IF NOT EXISTS speed_dating_participants (
   id SERIAL PRIMARY KEY,
   event_id INTEGER NOT NULL REFERENCES speed_dating_events(id) ON DELETE CASCADE,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   participant_number INTEGER,
   checked_in_at TIMESTAMP,
   checked_out_at TIMESTAMP,
   connection_quality VARCHAR(20), -- 'excellent', 'good', 'fair', 'poor'
   technical_issues INTEGER DEFAULT 0,
   status VARCHAR(20) DEFAULT 'registered' CHECK (status IN ('registered', 'checked_in', 'active', 'completed', 'no_show', 'disconnected')),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(event_id, user_id)
 );
 
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS speed_dating_rounds (
   ended_at TIMESTAMP,
   duration_seconds INTEGER,
   status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'completed', 'skipped')),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(event_id, round_number)
 );
 
@@ -62,13 +62,13 @@ CREATE TABLE IF NOT EXISTS speed_dating_matches (
   id SERIAL PRIMARY KEY,
   round_id INTEGER NOT NULL REFERENCES speed_dating_rounds(id) ON DELETE CASCADE,
   event_id INTEGER NOT NULL REFERENCES speed_dating_events(id) ON DELETE CASCADE,
-  participant1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  participant2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  match_started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  participant1_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  participant2_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  match_started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   match_ended_at TIMESTAMP,
   room_name VARCHAR(100),
   status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('pending', 'active', 'completed', 'ended_early', 'failed')),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(participant1_id, participant2_id, round_id),
   CHECK (participant1_id != participant2_id)
 );
@@ -79,14 +79,14 @@ CREATE TABLE IF NOT EXISTS speed_dating_ratings (
   match_id INTEGER NOT NULL REFERENCES speed_dating_matches(id) ON DELETE CASCADE,
   event_id INTEGER NOT NULL REFERENCES speed_dating_events(id) ON DELETE CASCADE,
   rater_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  rated_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rated_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   rating INTEGER CHECK (rating >= 1 AND rating <= 5),
   would_match_again BOOLEAN DEFAULT false,
   interest_level VARCHAR(20) CHECK (interest_level IN ('not_interested', 'maybe', 'interested', 'very_interested')),
   report_reason VARCHAR(100),
   notes TEXT,
   tags TEXT[], -- 'funny', 'attractive', 'smart', etc.
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(rater_id, rated_user_id, match_id),
   CHECK (rater_id != rated_user_id)
 );
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS speed_dating_mutual_matches (
   match_score INTEGER DEFAULT 0,
   compatibility_tags TEXT[],
   icebreaker_sent BOOLEAN DEFAULT false,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(event_id, user1_id, user2_id),
   CHECK (user1_id < user2_id)
 );
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS speed_dating_mutual_matches (
 -- Speed dating stats and analytics
 CREATE TABLE IF NOT EXISTS speed_dating_stats (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   events_participated INTEGER DEFAULT 0,
   total_rounds INTEGER DEFAULT 0,
   total_matches INTEGER DEFAULT 0,
@@ -116,8 +116,8 @@ CREATE TABLE IF NOT EXISTS speed_dating_stats (
   average_rating DECIMAL(3, 2),
   received_rating_count INTEGER DEFAULT 0,
   last_participated_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id)
 );
 
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS speed_dating_rooms (
   room_type VARCHAR(20) DEFAULT 'webrtc' CHECK (room_type IN ('webrtc', 'sfu', 'peer_to_peer')),
   turn_server_url VARCHAR(255),
   stun_server_url VARCHAR(255),
-  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   ended_at TIMESTAMP,
   duration_seconds INTEGER,
   status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'ended', 'failed'))

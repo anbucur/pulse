@@ -3,7 +3,7 @@
 -- Photo verification attempts
 CREATE TABLE IF NOT EXISTS photo_verifications (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   live_photo_url VARCHAR(500),
   profile_photo_id INTEGER,
   comparison_score DECIMAL(5,2),
@@ -14,34 +14,34 @@ CREATE TABLE IF NOT EXISTS photo_verifications (
   user_agent TEXT,
   verified_at TIMESTAMP,
   expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '30 days'),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Verification badges (visual indicators on profile)
 CREATE TABLE IF NOT EXISTS verification_badges (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   badge_type VARCHAR(30) DEFAULT 'verified' CHECK (badge_type IN ('verified', 'verified_plus', 'super_verified')),
   display_on_profile BOOLEAN DEFAULT true,
   last_verified_at TIMESTAMP,
   verification_count INTEGER DEFAULT 0,
   consecutive_verifications INTEGER DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Verification audit log
 CREATE TABLE IF NOT EXISTS verification_audit_log (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   verification_id INTEGER REFERENCES photo_verifications(id) ON DELETE SET NULL,
   action VARCHAR(50) NOT NULL,
   status_from VARCHAR(20),
   status_to VARCHAR(20),
   details JSONB,
   ip_address VARCHAR(45),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance

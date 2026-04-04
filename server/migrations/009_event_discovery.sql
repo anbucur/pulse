@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS discovered_events (
   organizer_name VARCHAR(255),
   organizer_url VARCHAR(500),
   last_synced_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Event categories for filtering
@@ -42,14 +42,14 @@ CREATE TABLE IF NOT EXISTS event_categories (
   color VARCHAR(20),
   display_order INTEGER DEFAULT 0,
   active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- RSVPs for discovered events
 CREATE TABLE IF NOT EXISTS event_rsvps (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   event_id INTEGER NOT NULL REFERENCES discovered_events(id) ON DELETE CASCADE,
   rsvp_status VARCHAR(20) DEFAULT 'going' CHECK (rsvp_status IN ('going', 'maybe', 'interested')),
   plus_ones INTEGER DEFAULT 0,
@@ -58,8 +58,8 @@ CREATE TABLE IF NOT EXISTS event_rsvps (
   checked_in_at TIMESTAMP,
   checked_out_at TIMESTAMP,
   visibility VARCHAR(20) DEFAULT 'public' CHECK (visibility IN ('public', 'friends', 'private')),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, event_id)
 );
 
@@ -67,9 +67,9 @@ CREATE TABLE IF NOT EXISTS event_rsvps (
 CREATE TABLE IF NOT EXISTS event_attendance (
   id SERIAL PRIMARY KEY,
   rsvp_id INTEGER REFERENCES event_rsvps(id) ON DELETE SET NULL,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   event_id INTEGER NOT NULL REFERENCES discovered_events(id) ON DELETE CASCADE,
-  checked_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  checked_in_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   checked_out_at TIMESTAMP,
   duration_minutes INTEGER,
   UNIQUE(user_id, event_id)
@@ -78,11 +78,11 @@ CREATE TABLE IF NOT EXISTS event_attendance (
 -- Event interests for recommendations
 CREATE TABLE IF NOT EXISTS event_interests (
   id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   category VARCHAR(100) NOT NULL,
   preference_score INTEGER DEFAULT 5 CHECK (preference_score >= 1 AND preference_score <= 10),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, category)
 );
 

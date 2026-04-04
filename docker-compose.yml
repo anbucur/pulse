@@ -6,7 +6,7 @@ services:
     container_name: pulse-postgres
     environment:
       POSTGRES_USER: pulse
-      POSTGRES_PASSWORD: pulse_password_change_in_production
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
       POSTGRES_DB: pulse
     ports:
       - "5432:5432"
@@ -26,8 +26,8 @@ services:
     container_name: pulse-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin_change_in_production
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme_in_production_min_8_chars}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -61,7 +61,7 @@ services:
     image: getmeili/meilisearch:v1.5
     container_name: pulse-meilisearch
     environment:
-      MEILI_MASTER_KEY: meilisearch_master_key_change_in_production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-changeme_in_production_min_32_chars}
       MEILI_ENV: production
     ports:
       - "7700:7700"
@@ -83,19 +83,19 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgresql://pulse:pulse_password_change_in_production@postgres:5432/pulse
+      DATABASE_URL: postgresql://pulse:${POSTGRES_PASSWORD:-changeme}@postgres:5432/pulse
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin_change_in_production
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-changeme}
       MINIO_BUCKET: pulse
       REDIS_URL: redis://valkey:6379
       MEILISEARCH_ENDPOINT: http://meilisearch:7700
-      MEILISEARCH_API_KEY: meilisearch_master_key_change_in_production
-      JWT_SECRET: your_jwt_secret_change_in_production
+      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-changeme}
+      JWT_SECRET: ${JWT_SECRET:-changeme_in_production_min_32_chars}
       JWT_EXPIRES_IN: 7d
       JWT_REFRESH_EXPIRES_IN: 30d
-      VAPID_PUBLIC_KEY: your_vapid_public_key
-      VAPID_PRIVATE_KEY: your_vapid_private_key
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-changeme}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-changeme}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     ports:
       - "3000:3000"
