@@ -44,6 +44,8 @@ import eventDiscoveryRoutes from './routes/event-discovery.js';
 import speedDatingRoutes from './routes/speed-dating.js';
 import musicRoutes from './routes/music.js';
 import datePlannerRoutes from './routes/date-planner.js';
+import subscriptionRoutes from './routes/subscription.js';
+import referralRoutes from './routes/referrals.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -138,6 +140,8 @@ app.use('/api/event-discovery', eventDiscoveryRoutes);
 app.use('/api/speed-dating', speedDatingRoutes);
 app.use('/api/music', musicRoutes);
 app.use('/api/date-planner', datePlannerRoutes);
+app.use('/api/subscription', subscriptionRoutes);
+app.use('/api/referrals', referralRoutes);
 
   // Create HTTP server
   const server = createServer(app);
