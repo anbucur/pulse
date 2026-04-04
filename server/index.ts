@@ -32,6 +32,8 @@ import chemistryRoutes from './routes/chemistry.js';
 import safesignalRoutes from './routes/safesignal.js';
 import fantasyRoutes from './routes/fantasy.js';
 import marketplaceRoutes from './routes/marketplace.js';
+import slowdatingRoutes from './routes/slowdating.js';
+import voiceRoutes from './routes/voice.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -114,6 +116,8 @@ app.use('/api/chemistry', chemistryRoutes);
 app.use('/api/safesignal', safesignalRoutes);
 app.use('/api/fantasy', fantasyRoutes);
 app.use('/api/marketplace', marketplaceRoutes);
+app.use('/api/slowdating', slowdatingRoutes);
+app.use('/api/voice', voiceRoutes);
 
   // Create HTTP server
   const server = createServer(app);
