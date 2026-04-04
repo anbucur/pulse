@@ -40,6 +40,8 @@ import vouchRoutes from './routes/vouch.js';
 import completionRoutes from './routes/completion.js';
 import verificationRoutes from './routes/verification.js';
 import locationSharingRoutes from './routes/location-sharing.js';
+import eventDiscoveryRoutes from './routes/event-discovery.js';
+import speedDatingRoutes from './routes/speed-dating.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -130,6 +132,8 @@ app.use('/api/vouch', vouchRoutes);
 app.use('/api/completion', completionRoutes);
 app.use('/api/verification', verificationRoutes);
 app.use('/api/location-sharing', locationSharingRoutes);
+app.use('/api/event-discovery', eventDiscoveryRoutes);
+app.use('/api/speed-dating', speedDatingRoutes);
 
   // Create HTTP server
   const server = createServer(app);
