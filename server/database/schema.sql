@@ -1236,3 +1236,334 @@ CREATE INDEX IF NOT EXISTS idx_blueprint_contributions_created ON blueprint_cont
 
 CREATE TRIGGER update_fantasy_blueprints_updated_at BEFORE UPDATE ON fantasy_blueprints
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Date Marketplace - Revenue-generating venue marketplace
+CREATE TABLE IF NOT EXISTS venues (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    -- Venue details
+    name VARCHAR(200) NOT NULL,
+    description TEXT,
+    tagline VARCHAR(300),
+
+    -- Location
+    address TEXT NOT NULL,
+    city VARCHAR(100),
+    state VARCHAR(100),
+    postal_code VARCHAR(20),
+    country VARCHAR(100) DEFAULT 'US',
+    latitude DECIMAL(10, 8),
+    longitude DECIMAL(11, 8),
+
+    -- Contact
+    phone VARCHAR(50),
+    email VARCHAR(255),
+    website TEXT,
+
+    -- Categories and tags
+    venue_type VARCHAR(100)[],
+    ambiance VARCHAR(100)[],
+    price_range VARCHAR(50),
+    dress_code VARCHAR(100),
+
+    -- Amenities
+    amenities VARCHAR(200)[],
+    dietary_options VARCHAR(200)[],
+    accessibility_features VARCHAR(200)[],
+
+    -- Media
+    photos TEXT[],
+    logo_url TEXT,
+    cover_photo_url TEXT,
+
+    -- Operating hours
+    hours_json JSONB,
+
+    -- Capacity
+    max_party_size INTEGER,
+    private_dining_available BOOLEAN DEFAULT false,
+
+    -- Verification
+    is_verified BOOLEAN DEFAULT false,
+    verified_at TIMESTAMP,
+
+    -- Status
+    is_active BOOLEAN DEFAULT true,
+    is_suspended BOOLEAN DEFAULT false,
+    suspension_reason TEXT,
+
+    -- Rating (aggregate from reviews)
+    average_rating DECIMAL(3, 2),
+    total_reviews INTEGER DEFAULT 0,
+    total_bookings INTEGER DEFAULT 0,
+
+    -- Commission
+    commission_rate DECIMAL(5, 2) DEFAULT 12.50,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_venues_location ON venues(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_venues_type ON venues USING GIN (venue_type);
+CREATE INDEX IF NOT EXISTS idx_venues_owner ON venues(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_venues_active ON venues(is_active);
+CREATE INDEX IF NOT EXISTS idx_venues_rating ON venues(average_rating);
+
+-- Date Packages - Curated date experiences from venues
+CREATE TABLE IF NOT EXISTS date_packages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    venue_id UUID REFERENCES venues(id) ON DELETE CASCADE,
+
+    -- Package details
+    title VARCHAR(200) NOT NULL,
+    description TEXT NOT NULL,
+    tagline VARCHAR(300),
+
+    -- Category
+    package_type VARCHAR(100) NOT NULL,
+    vibe VARCHAR(100)[],
+    date_intensity VARCHAR(50),
+
+    -- Pricing
+    base_price DECIMAL(10, 2) NOT NULL,
+    price_per_person BOOLEAN DEFAULT false,
+    min_price DECIMAL(10, 2),
+    max_price DECIMAL(10, 2),
+
+    -- Capacity
+    min_party_size INTEGER DEFAULT 2,
+    max_party_size INTEGER DEFAULT 10,
+
+    -- Duration
+    duration_hours DECIMAL(4, 1),
+    duration_text VARCHAR(100),
+
+    -- What's included
+    inclusions TEXT[],
+    exclusions TEXT[],
+
+    -- Dietary and restrictions
+    dietary_accommodations VARCHAR(200)[],
+    restrictions TEXT[],
+
+    -- Availability
+    is_active BOOLEAN DEFAULT true,
+    available_days VARCHAR(20)[],
+    advance_booking_hours INTEGER DEFAULT 24,
+    seasonal_availability JSONB,
+
+    -- Media
+    photos TEXT[],
+    video_url TEXT,
+
+    -- Popular times (analytics)
+    popularity_score INTEGER DEFAULT 0,
+    booking_count INTEGER DEFAULT 0,
+    view_count INTEGER DEFAULT 0,
+
+    -- Tags for discovery
+    tags VARCHAR(200)[],
+    good_for VARCHAR(200)[],
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_date_packages_venue ON date_packages(venue_id);
+CREATE INDEX IF NOT EXISTS idx_date_packages_type ON date_packages(package_type);
+CREATE INDEX IF NOT EXISTS idx_date_packages_vibe ON date_packages USING GIN (vibe);
+CREATE INDEX IF NOT EXISTS idx_date_packages_tags ON date_packages USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_date_packages_price ON date_packages(base_price);
+CREATE INDEX IF NOT EXISTS idx_date_packages_popularity ON date_packages(popularity_score);
+
+-- Bookings - Date package reservations
+CREATE TABLE IF NOT EXISTS package_bookings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    package_id UUID REFERENCES date_packages(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    venue_id UUID REFERENCES venues(id) ON DELETE CASCADE,
+
+    -- Booking details
+    booking_date DATE NOT NULL,
+    booking_time TIME NOT NULL,
+    party_size INTEGER NOT NULL,
+
+    -- Special requests
+    special_requests TEXT,
+    dietary_restrictions TEXT[],
+    occasion VARCHAR(100),
+    celebration_details TEXT,
+
+    -- Pricing
+    total_price DECIMAL(10, 2) NOT NULL,
+    commission_amount DECIMAL(10, 2) NOT NULL,
+    venue_payout DECIMAL(10, 2) NOT NULL,
+
+    -- Payment
+    payment_status VARCHAR(50) DEFAULT 'pending',
+    payment_id TEXT,
+    paid_at TIMESTAMP,
+
+    -- Status
+    booking_status VARCHAR(50) DEFAULT 'confirmed',
+
+    -- Confirmation
+    confirmation_code VARCHAR(20) UNIQUE,
+    confirmed_by VARCHAR(100),
+    confirmed_at TIMESTAMP,
+
+    -- Reminders
+    reminder_sent BOOLEAN DEFAULT false,
+    reminder_sent_at TIMESTAMP,
+
+    -- Check-in
+    checked_in BOOLEAN DEFAULT false,
+    checked_in_at TIMESTAMP,
+
+    -- Cancellation
+    is_cancelled BOOLEAN DEFAULT false,
+    cancelled_at TIMESTAMP,
+    cancellation_reason TEXT,
+    refund_amount DECIMAL(10, 2),
+    refund_status VARCHAR(50),
+
+    -- No-show protection
+    is_no_show BOOLEAN DEFAULT false,
+    no_show_reported_at TIMESTAMP,
+
+    -- Venue notes
+    venue_notes TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_package_bookings_package ON package_bookings(package_id);
+CREATE INDEX IF NOT EXISTS idx_package_bookings_user ON package_bookings(user_id);
+CREATE INDEX IF NOT EXISTS idx_package_bookings_venue ON package_bookings(venue_id);
+CREATE INDEX IF NOT EXISTS idx_package_bookings_date ON package_bookings(booking_date);
+CREATE INDEX IF NOT EXISTS idx_package_bookings_status ON package_bookings(booking_status);
+CREATE INDEX IF NOT EXISTS idx_package_bookings_confirmation ON package_bookings(confirmation_code);
+
+-- Package Reviews - User reviews after booking
+CREATE TABLE IF NOT EXISTS package_reviews (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    booking_id UUID REFERENCES package_bookings(id) ON DELETE CASCADE,
+    package_id UUID REFERENCES date_packages(id) ON DELETE CASCADE,
+    venue_id UUID REFERENCES venues(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    -- Ratings
+    overall_rating INTEGER NOT NULL CHECK (overall_rating >= 1 AND overall_rating <= 5),
+    atmosphere_rating INTEGER,
+    service_rating INTEGER,
+    value_rating INTEGER,
+    food_quality_rating INTEGER,
+
+    -- Review content
+    title VARCHAR(200),
+    review TEXT,
+    photos TEXT[],
+
+    -- Tags
+    review_tags VARCHAR(200)[],
+
+    -- Recommendations
+    would_recommend BOOLEAN,
+    good_for VARCHAR(200)[],
+
+    -- Verification
+    is_verified_experience BOOLEAN DEFAULT true,
+
+    -- Venue response
+    venue_response TEXT,
+    venue_responded_at TIMESTAMP,
+    venue_response_likes INTEGER DEFAULT 0,
+
+    -- Moderation
+    is_flagged BOOLEAN DEFAULT false,
+    is_hidden BOOLEAN DEFAULT false,
+    moderation_notes TEXT,
+
+    -- Helpful votes
+    helpful_count INTEGER DEFAULT 0,
+    not_helpful_count INTEGER DEFAULT 0,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(booking_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_package_reviews_booking ON package_reviews(booking_id);
+CREATE INDEX IF NOT EXISTS idx_package_reviews_package ON package_reviews(package_id);
+CREATE INDEX IF NOT EXISTS idx_package_reviews_venue ON package_reviews(venue_id);
+CREATE INDEX IF NOT EXISTS idx_package_reviews_user ON package_reviews(user_id);
+CREATE INDEX IF NOT EXISTS idx_package_reviews_rating ON package_reviews(overall_rating);
+CREATE INDEX IF NOT EXISTS idx_package_reviews_created ON package_reviews(created_at);
+
+-- Revenue Tracking - Financial analytics for venues and platform
+CREATE TABLE IF NOT EXISTS revenue_tracking (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    venue_id UUID REFERENCES venues(id) ON DELETE CASCADE,
+    booking_id UUID REFERENCES package_bookings(id) ON DELETE SET NULL,
+
+    -- Transaction details
+    transaction_type VARCHAR(50) NOT NULL,
+    transaction_date DATE NOT NULL,
+
+    -- Amounts
+    gross_amount DECIMAL(10, 2) NOT NULL,
+    commission_amount DECIMAL(10, 2) NOT NULL,
+    net_payout DECIMAL(10, 2) NOT NULL,
+
+    -- Commission breakdown
+    commission_rate DECIMAL(5, 2) NOT NULL,
+
+    -- Payment status
+    payment_status VARCHAR(50) DEFAULT 'pending',
+    payment_processed_at TIMESTAMP,
+    payment_method VARCHAR(100),
+    transaction_id TEXT,
+
+    -- Refunds
+    refund_amount DECIMAL(10, 2) DEFAULT 0,
+    refund_reason TEXT,
+    refund_processed_at TIMESTAMP,
+
+    -- Payout to venue
+    payout_status VARCHAR(50) DEFAULT 'pending',
+    payout_scheduled_at TIMESTAMP,
+    payout_completed_at TIMESTAMP,
+    payout_method VARCHAR(100),
+    payout_reference TEXT,
+
+    -- Metadata
+    metadata JSONB,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_revenue_tracking_venue ON revenue_tracking(venue_id);
+CREATE INDEX IF NOT EXISTS idx_revenue_tracking_booking ON revenue_tracking(booking_id);
+CREATE INDEX IF NOT EXISTS idx_revenue_tracking_date ON revenue_tracking(transaction_date);
+CREATE INDEX IF NOT EXISTS idx_revenue_tracking_type ON revenue_tracking(transaction_type);
+CREATE INDEX IF NOT EXISTS idx_revenue_tracking_payout ON revenue_tracking(payout_status);
+
+CREATE TRIGGER update_venues_updated_at BEFORE UPDATE ON venues
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_date_packages_updated_at BEFORE UPDATE ON date_packages
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_package_bookings_updated_at BEFORE UPDATE ON package_bookings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_package_reviews_updated_at BEFORE UPDATE ON package_reviews
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_revenue_tracking_updated_at BEFORE UPDATE ON revenue_tracking
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
