@@ -36,6 +36,8 @@ import slowdatingRoutes from './routes/slowdating.js';
 import voiceRoutes from './routes/voice.js';
 import convoStartersRoutes from './routes/convo-starters.js';
 import ghostingRoutes from './routes/ghosting.js';
+import vouchRoutes from './routes/vouch.js';
+import completionRoutes from './routes/completion.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -122,6 +124,8 @@ app.use('/api/slowdating', slowdatingRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/convo-starters', convoStartersRoutes);
 app.use('/api/ghosting', ghostingRoutes);
+app.use('/api/vouch', vouchRoutes);
+app.use('/api/completion', completionRoutes);
 
   // Create HTTP server
   const server = createServer(app);
