@@ -20,6 +20,9 @@ import searchRoutes from './routes/search.js';
 import aiRoutes from './routes/ai.js';
 import chatRoutes from './routes/chat.js';
 import featureRoutes from './routes/features.js';
+import notificationRoutes from './routes/notifications.js';
+import eventsRoutes from './routes/events.js';
+import negotiationRoutes from './routes/negotiation.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -90,6 +93,9 @@ async function startServer() {
   app.use('/api/ai', aiRoutes);
   app.use('/api/chat', chatRoutes);
   app.use('/api/features', featureRoutes);
+  app.use('/api/notifications', notificationRoutes);
+  app.use('/api/events', eventsRoutes);
+  app.use('/api/negotiation', negotiationRoutes);
 
   // Create HTTP server
   const server = createServer(app);

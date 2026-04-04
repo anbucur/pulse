@@ -461,3 +461,298 @@ CREATE TRIGGER update_social_references_updated_at BEFORE UPDATE ON social_refer
 
 CREATE TRIGGER update_chat_rooms_updated_at BEFORE UPDATE ON chat_rooms
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Scene Match - Events
+CREATE TABLE IF NOT EXISTS events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+    event_type VARCHAR(100),
+    event_url TEXT,
+
+    venue_name VARCHAR(200),
+    venue_address TEXT,
+    latitude DECIMAL(10, 8),
+    longitude DECIMAL(11, 8),
+
+    event_date TIMESTAMP NOT NULL,
+    end_date TIMESTAMP,
+
+    age_restriction VARCHAR(50),
+    dress_code TEXT,
+    ticket_price VARCHAR(100),
+    ticket_url TEXT,
+
+    tags VARCHAR(200)[],
+    is_public BOOLEAN DEFAULT true,
+    max_attendees INTEGER,
+
+    status VARCHAR(50) DEFAULT 'upcoming',
+    is_cancelled BOOLEAN DEFAULT false,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_date ON events(event_date);
+CREATE INDEX IF NOT EXISTS idx_events_location ON events(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+CREATE INDEX IF NOT EXISTS idx_events_tags ON events USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_events_created_by ON events(created_by);
+
+-- Event Attendees
+CREATE TABLE IF NOT EXISTS event_attendees (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_id UUID REFERENCES events(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    attendance_status VARCHAR(50) DEFAULT 'attending',
+    plus_ones INTEGER DEFAULT 0,
+    notes TEXT,
+
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(event_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_attendees_event ON event_attendees(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_attendees_user ON event_attendees(user_id);
+CREATE INDEX IF NOT EXISTS idx_event_attendees_status ON event_attendees(attendance_status);
+
+-- Event Matches (auto-generated matches between attendees)
+CREATE TABLE IF NOT EXISTS event_matches (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_id UUID REFERENCES events(id) ON DELETE CASCADE,
+    user1_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    user2_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    compatibility_score INTEGER,
+    shared_interests TEXT[],
+    match_reason TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(event_id, user1_id, user2_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_matches_event ON event_matches(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_matches_users ON event_matches(user1_id, user2_id);
+CREATE INDEX IF NOT EXISTS idx_event_matches_score ON event_matches(compatibility_score);
+
+-- Negotiation Sessions
+CREATE TABLE IF NOT EXISTS negotiation_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    initiated_by UUID REFERENCES users(id) ON DELETE CASCADE,
+    with_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    status VARCHAR(50) DEFAULT 'pending',
+
+    phase VARCHAR(50) DEFAULT 'preferences',
+    user1_completed BOOLEAN DEFAULT false,
+    user2_completed BOOLEAN DEFAULT false,
+
+    match_score INTEGER,
+    highlighted_matches TEXT[],
+    potential_gaps TEXT[],
+
+    scheduled_meeting_at TIMESTAMP,
+    meeting_notes TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(initiated_by, with_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_negotiation_initiated ON negotiation_sessions(initiated_by);
+CREATE INDEX IF NOT EXISTS idx_negotiation_with ON negotiation_sessions(with_user_id);
+CREATE INDEX IF NOT EXISTS idx_negotiation_status ON negotiation_sessions(status);
+
+-- Negotiation Categories
+CREATE TABLE IF NOT EXISTS negotiation_categories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    icon VARCHAR(50),
+    display_order INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT true
+);
+
+-- Negotiation Questions
+CREATE TABLE IF NOT EXISTS negotiation_questions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category_id UUID REFERENCES negotiation_categories(id) ON DELETE CASCADE,
+
+    question_text TEXT NOT NULL,
+    question_type VARCHAR(50) DEFAULT 'single_choice',
+    options JSONB,
+
+    allows_multiple BOOLEAN DEFAULT false,
+    requires_explanation BOOLEAN DEFAULT false,
+
+    display_order INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT true
+);
+
+CREATE INDEX IF NOT EXISTS idx_negotiation_questions_category ON negotiation_questions(category_id);
+CREATE INDEX IF NOT EXISTS idx_negotiation_questions_active ON negotiation_questions(is_active);
+
+-- Negotiation Answers
+CREATE TABLE IF NOT EXISTS negotiation_answers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id UUID REFERENCES negotiation_sessions(id) ON DELETE CASCADE,
+    question_id UUID REFERENCES negotiation_questions(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    answer JSONB,
+    explanation TEXT,
+
+    answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(session_id, question_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_negotiation_answers_session ON negotiation_answers(session_id);
+CREATE INDEX IF NOT EXISTS idx_negotiation_answers_user ON negotiation_answers(user_id);
+
+-- Add triggers for new tables
+CREATE TRIGGER update_events_updated_at BEFORE UPDATE ON events
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_event_attendees_updated_at BEFORE UPDATE ON event_attendees
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_negotiation_sessions_updated_at BEFORE UPDATE ON negotiation_sessions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Insert default negotiation categories
+INSERT INTO negotiation_categories (name, description, icon, display_order) VALUES
+    ('Communication', 'How we talk and connect', 'message-circle', 1),
+    ('Physical Intimacy', 'Boundaries, pace, and preferences', 'heart', 2),
+    ('Social & Lifestyle', 'Social battery, habits, and routines', 'users', 3),
+    ('Dating Expectations', 'What we are looking for', 'target', 4),
+    ('Safety & Consent', 'Boundaries and agreements', 'shield', 5),
+    ('Kinks & Fetishes', 'Shared interests and exploration', 'sparkles', 6)
+ON CONFLICT (name) DO NOTHING;
+
+-- Insert default negotiation questions
+INSERT INTO negotiation_questions (category_id, question_text, question_type, options, allows_multiple, display_order)
+SELECT
+    c.id,
+    'What is your preferred communication frequency?',
+    'single_choice',
+    '["Daily", "Every few days", "Weekly", "As needed", "I will let you know"]'::jsonb,
+    false,
+    1
+FROM negotiation_categories c WHERE c.name = 'Communication'
+UNION ALL
+SELECT
+    c.id,
+    'What is your preferred response time?',
+    'single_choice',
+    '["Within hours", "Same day", "Within 24-48 hours", "Flexible"]'::jsonb,
+    false,
+    2
+FROM negotiation_categories c WHERE c.name = 'Communication'
+UNION ALL
+SELECT
+    c.id,
+    'What is your preferred communication style?',
+    'multiple_choice',
+    '["Text messages", "Voice notes", "Video calls", "Phone calls", "In person"]'::jsonb,
+    true,
+    3
+FROM negotiation_categories c WHERE c.name = 'Communication'
+UNION ALL
+SELECT
+    c.id,
+    'What pace are you comfortable with for physical intimacy?',
+    'single_choice',
+    '["Slow - multiple dates first", "Moderate - when it feels right", "Fast - chemistry is key", "Depends on the connection"]'::jsonb,
+    false,
+    1
+FROM negotiation_categories c WHERE c.name = 'Physical Intimacy'
+UNION ALL
+SELECT
+    c.id,
+    'What are your boundaries for public displays of affection (PDA)?',
+    'single_choice',
+    '["Very comfortable", "Comfortable with hand-holding and light kisses", "Minimal PDA preferred", "No PDA"]'::jsonb,
+    false,
+    2
+FROM negotiation_categories c WHERE c.name = 'Physical Intimacy'
+UNION ALL
+SELECT
+    c.id,
+    'What is your typical social battery like?',
+    'single_choice',
+    '["High - love socializing", "Medium - enjoy social events but need recharge time", "Low - prefer smaller gatherings", "Varies"]'::jsonb,
+    false,
+    1
+FROM negotiation_categories c WHERE c.name = 'Social & Lifestyle'
+UNION ALL
+SELECT
+    c.id,
+    'What type of dates do you prefer?',
+    'multiple_choice',
+    '["Dinner and drinks", ' ||
+    '"Activity-based (bowling, hiking, etc)", ' ||
+    '"Coffee and conversation", ' ||
+    '"Events and concerts", ' ||
+    '"Creative dates (museums, galleries)"]'::jsonb,
+    true,
+    2
+FROM negotiation_categories c WHERE c.name = 'Social & Lifestyle'
+UNION ALL
+SELECT
+    c.id,
+    'What are you looking for?',
+    'multiple_choice',
+    '["Casual dating", ' ||
+    '"Serious relationship", ' ||
+    '"Friendship with benefits", ' ||
+    '"Play partner", ' ||
+    '"Open to possibilities"]'::jsonb,
+    true,
+    1
+FROM negotiation_categories c WHERE c.name = 'Dating Expectations'
+UNION ALL
+SELECT
+    c.id,
+    'How do you feel about exclusivity?',
+    'single_choice',
+    '["Monogamous - one partner at a time", ' ||
+    '"Ethically non-monogamous", ' ||
+    '"Open to discuss", ' ||
+    '"Not looking for exclusivity right now"]'::jsonb,
+    false,
+    2
+FROM negotiation_categories c WHERE c.name = 'Dating Expectations'
+UNION ALL
+SELECT
+    c.id,
+    'What is your approach to sexual health?',
+    'single_choice',
+    '["Regular testing (every 3-6 months)", ' ||
+    '"Test before new partners", ' ||
+    '"Test annually", ' ||
+    '"Upon request"]'::jsonb,
+    false,
+    1
+FROM negotiation_categories c WHERE c.name = 'Safety & Consent'
+UNION ALL
+SELECT
+    c.id,
+    'How important is discussing boundaries before meeting?',
+    'single_choice',
+    '["Essential - must discuss beforehand", ' ||
+    '"Important - prefer to discuss", ' ||
+    '"Flexible - can discuss when meeting", ' ||
+    '"As needed"]'::jsonb,
+    false,
+    2
+FROM negotiation_categories c WHERE c.name = 'Safety & Consent'
+ON CONFLICT DO NOTHING;
