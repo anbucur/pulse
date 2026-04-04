@@ -756,3 +756,48 @@ SELECT
     2
 FROM negotiation_categories c WHERE c.name = 'Safety & Consent'
 ON CONFLICT DO NOTHING;
+
+-- Vibe Timeline - Daily mood/energy/appetite entries
+CREATE TABLE IF NOT EXISTS vibe_entries (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    date DATE NOT NULL,
+    mood VARCHAR(50) NOT NULL,
+    energy INTEGER DEFAULT 50,
+    social_appetite INTEGER DEFAULT 50,
+    note TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(user_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vibe_entries_user ON vibe_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_vibe_entries_date ON vibe_entries(date);
+CREATE INDEX IF NOT EXISTS idx_vibe_entries_mood ON vibe_entries(mood);
+
+CREATE TRIGGER update_vibe_entries_updated_at BEFORE UPDATE ON vibe_entries
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Wingman AI - Date briefings
+CREATE TABLE IF NOT EXISTS wingman_briefings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    target_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    compatibility_score INTEGER,
+    date_ideas TEXT[],
+    conversation_starters TEXT[],
+    compatibility_notes TEXT,
+    key_observations TEXT[],
+
+    generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(user_id, target_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wingman_user ON wingman_briefings(user_id);
+CREATE INDEX IF NOT EXISTS idx_wingman_target ON wingman_briefings(target_user_id);
+CREATE INDEX IF NOT EXISTS idx_wingman_generated ON wingman_briefings(generated_at);
