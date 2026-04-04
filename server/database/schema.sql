@@ -801,3 +801,189 @@ CREATE TABLE IF NOT EXISTS wingman_briefings (
 CREATE INDEX IF NOT EXISTS idx_wingman_user ON wingman_briefings(user_id);
 CREATE INDEX IF NOT EXISTS idx_wingman_target ON wingman_briefings(target_user_id);
 CREATE INDEX IF NOT EXISTS idx_wingman_generated ON wingman_briefings(generated_at);
+
+-- Aftercare Check-In - Post-date feedback system
+CREATE TABLE IF NOT EXISTS date_pairs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user1_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    user2_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    scheduled_date TIMESTAMP,
+    met_at TIMESTAMP,
+
+    status VARCHAR(50) DEFAULT 'scheduled',
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(user1_id, user2_id, scheduled_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_date_pairs_user1 ON date_pairs(user1_id);
+CREATE INDEX IF NOT EXISTS idx_date_pairs_user2 ON date_pairs(user2_id);
+CREATE INDEX IF NOT EXISTS idx_date_pairs_status ON date_pairs(status);
+CREATE INDEX IF NOT EXISTS idx_date_pairs_date ON date_pairs(scheduled_date);
+
+CREATE TABLE IF NOT EXISTS aftercare_checkins (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    date_pair_id UUID REFERENCES date_pairs(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    rating INTEGER,
+    would_see_again BOOLEAN,
+    felt_safe BOOLEAN,
+
+    what_went_well TEXT[],
+    could_improve TEXT[],
+    boundaries_respected BOOLEAN,
+    communication_rating INTEGER,
+
+    safety_concerns BOOLEAN DEFAULT false,
+    safety_report TEXT,
+    report_anonymous BOOLEAN DEFAULT true,
+
+    wants_second_date BOOLEAN DEFAULT false,
+    second_date_suggestions TEXT[],
+
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(date_pair_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_aftercare_date_pair ON aftercare_checkins(date_pair_id);
+CREATE INDEX IF NOT EXISTS idx_aftercare_user ON aftercare_checkins(user_id);
+CREATE INDEX IF NOT EXISTS idx_aftercare_rating ON aftercare_checkins(rating);
+CREATE INDEX IF NOT EXISTS idx_aftercare_safety ON aftercare_checkins(safety_concerns);
+
+CREATE TRIGGER update_date_pairs_updated_at BEFORE UPDATE ON date_pairs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Tribe Hubs - Micro-communities
+CREATE TABLE IF NOT EXISTS tribes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    name VARCHAR(200) NOT NULL,
+    description TEXT,
+    slug VARCHAR(200) UNIQUE,
+
+    category VARCHAR(100),
+    tags VARCHAR(200)[],
+
+    location VARCHAR(500),
+    is_location_based BOOLEAN DEFAULT false,
+    latitude DECIMAL(10, 8),
+    longitude DECIMAL(11, 8),
+
+    icon VARCHAR(100),
+    color VARCHAR(20),
+
+    is_private BOOLEAN DEFAULT false,
+    approval_required BOOLEAN DEFAULT false,
+
+    max_members INTEGER,
+
+    member_count INTEGER DEFAULT 0,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tribes_slug ON tribes(slug);
+CREATE INDEX IF NOT EXISTS idx_tribes_category ON tribes(category);
+CREATE INDEX IF NOT EXISTS idx_tribes_location ON tribes(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_tribes_created_by ON tribes(created_by);
+
+CREATE TABLE IF NOT EXISTS tribe_members (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tribe_id UUID REFERENCES tribes(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    role VARCHAR(50) DEFAULT 'member',
+
+    status VARCHAR(50) DEFAULT 'pending',
+
+    joined_at TIMESTAMP,
+    approved_at TIMESTAMP,
+    left_at TIMESTAMP,
+
+    notification_settings JSONB,
+
+    UNIQUE(tribe_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tribe_members_tribe ON tribe_members(tribe_id);
+CREATE INDEX IF NOT EXISTS idx_tribe_members_user ON tribe_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_tribe_members_status ON tribe_members(status);
+CREATE INDEX IF NOT EXISTS idx_tribe_members_role ON tribe_members(role);
+
+CREATE TABLE IF NOT EXISTS tribe_messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tribe_id UUID REFERENCES tribes(id) ON DELETE CASCADE,
+    sender_id UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    content TEXT NOT NULL,
+
+    reply_to UUID REFERENCES tribe_messages(id) ON DELETE SET NULL,
+
+    reactions JSONB,
+    is_pinned BOOLEAN DEFAULT false,
+
+    deleted_at TIMESTAMP,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tribe_messages_tribe ON tribe_messages(tribe_id);
+CREATE INDEX IF NOT EXISTS idx_tribe_messages_sender ON tribe_messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_tribe_messages_created ON tribe_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_tribe_messages_pinned ON tribe_messages(is_pinned);
+
+CREATE TABLE IF NOT EXISTS tribe_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tribe_id UUID REFERENCES tribes(id) ON DELETE CASCADE,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+
+    event_date TIMESTAMP NOT NULL,
+    venue_name VARCHAR(200),
+    venue_address TEXT,
+    location_url TEXT,
+
+    max_attendees INTEGER,
+
+    attendee_count INTEGER DEFAULT 0,
+
+    status VARCHAR(50) DEFAULT 'upcoming',
+    is_cancelled BOOLEAN DEFAULT false,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tribe_events_tribe ON tribe_events(tribe_id);
+CREATE INDEX IF NOT EXISTS idx_tribe_events_date ON tribe_events(event_date);
+CREATE INDEX IF NOT EXISTS idx_tribe_events_status ON tribe_events(status);
+
+CREATE TABLE IF NOT EXISTS tribe_event_attendees (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tribe_event_id UUID REFERENCES tribe_events(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    status VARCHAR(50) DEFAULT 'attending',
+
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(tribe_event_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tribe_event_attendees_event ON tribe_event_attendees(tribe_event_id);
+CREATE INDEX IF NOT EXISTS idx_tribe_event_attendees_user ON tribe_event_attendees(user_id);
+
+CREATE TRIGGER update_tribes_updated_at BEFORE UPDATE ON tribes
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tribe_events_updated_at BEFORE UPDATE ON tribe_events
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

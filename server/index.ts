@@ -25,6 +25,8 @@ import eventsRoutes from './routes/events.js';
 import negotiationRoutes from './routes/negotiation.js';
 import vibeRoutes from './routes/vibe.js';
 import wingmanRoutes from './routes/wingman.js';
+import aftercareRoutes from './routes/aftercare.js';
+import tribesRoutes from './routes/tribes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -100,6 +102,8 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/negotiation', negotiationRoutes);
 app.use('/api/vibe', vibeRoutes);
 app.use('/api/wingman', wingmanRoutes);
+app.use('/api/aftercare', aftercareRoutes);
+app.use('/api/tribes', tribesRoutes);
 
   // Create HTTP server
   const server = createServer(app);
