@@ -27,6 +27,8 @@ import vibeRoutes from './routes/vibe.js';
 import wingmanRoutes from './routes/wingman.js';
 import aftercareRoutes from './routes/aftercare.js';
 import tribesRoutes from './routes/tribes.js';
+import bodymapRoutes from './routes/bodymap.js';
+import chemistryRoutes from './routes/chemistry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -104,6 +106,8 @@ app.use('/api/vibe', vibeRoutes);
 app.use('/api/wingman', wingmanRoutes);
 app.use('/api/aftercare', aftercareRoutes);
 app.use('/api/tribes', tribesRoutes);
+app.use('/api/bodymap', bodymapRoutes);
+app.use('/api/chemistry', chemistryRoutes);
 
   // Create HTTP server
   const server = createServer(app);

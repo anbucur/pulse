@@ -987,3 +987,63 @@ CREATE TRIGGER update_tribes_updated_at BEFORE UPDATE ON tribes
 
 CREATE TRIGGER update_tribe_events_updated_at BEFORE UPDATE ON tribe_events
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Body Maps & Boundaries - Interactive body outline with zones
+CREATE TABLE IF NOT EXISTS body_maps (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    zones JSONB,
+
+    shared_with_matches BOOLEAN DEFAULT false,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_body_maps_user ON body_maps(user_id);
+CREATE INDEX IF NOT EXISTS idx_body_maps_shared ON body_maps(shared_with_matches);
+
+CREATE TRIGGER update_body_maps_updated_at BEFORE UPDATE ON body_maps
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Chemistry Predictor - Compatibility analysis cache
+CREATE TABLE IF NOT EXISTS chemistry_predictions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    target_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    -- Communication compatibility
+    communication_style_match INTEGER,
+    response_time_compatibility INTEGER,
+
+    -- Energy compatibility
+    social_battery_compatibility INTEGER,
+    activity_level_compatibility INTEGER,
+
+    -- Emotional dynamic
+    attachment_compatibility INTEGER,
+    emotional_needs_compatibility INTEGER,
+    conflict_style_compatibility INTEGER,
+
+    -- Overall prediction
+    overall_compatibility INTEGER,
+
+    -- Insights
+    strengths TEXT[],
+    potential_challenges TEXT[],
+    conversation_icebreakers TEXT[],
+
+    -- Pattern analysis (from chat history if exists)
+    communication_pattern_analysis JSONB,
+
+    calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(user_id, target_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chemistry_user ON chemistry_predictions(user_id);
+CREATE INDEX IF NOT EXISTS idx_chemistry_target ON chemistry_predictions(target_user_id);
+CREATE INDEX IF NOT EXISTS idx_chemistry_overall ON chemistry_predictions(overall_compatibility);
