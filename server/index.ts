@@ -34,6 +34,8 @@ import fantasyRoutes from './routes/fantasy.js';
 import marketplaceRoutes from './routes/marketplace.js';
 import slowdatingRoutes from './routes/slowdating.js';
 import voiceRoutes from './routes/voice.js';
+import convoStartersRoutes from './routes/convo-starters.js';
+import ghostingRoutes from './routes/ghosting.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -118,6 +120,8 @@ app.use('/api/fantasy', fantasyRoutes);
 app.use('/api/marketplace', marketplaceRoutes);
 app.use('/api/slowdating', slowdatingRoutes);
 app.use('/api/voice', voiceRoutes);
+app.use('/api/convo-starters', convoStartersRoutes);
+app.use('/api/ghosting', ghostingRoutes);
 
   // Create HTTP server
   const server = createServer(app);
