@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { chatProvider, aiProvider, storageProvider } from '../lib/providers';
 import type { ChatMessage } from '../lib/providers';
-import { ArrowLeft, Send, Image as ImageIcon, Sparkles, Loader2, Bot, Camera, X, Eye, EyeOff, Mic, Square, Trash2, Bookmark } from 'lucide-react';
+import { ArrowLeft, Send, Image as ImageIcon, Sparkles, Loader2, Bot, Camera, X, Eye, EyeOff, Mic, Square, Trash2, Bookmark, Shield } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import Webcam from 'react-webcam';
+import ConsentProtocol from '../components/ConsentProtocol';
 
 interface Profile {
   display_name: string;
@@ -28,6 +29,7 @@ export default function Chat() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [showSavedPhrases, setShowSavedPhrases] = useState(false);
+  const [showConsentProtocol, setShowConsentProtocol] = useState(false);
   const [savedPhrases, setSavedPhrases] = useState<{id: string, text: string}[]>([]);
   const [newPhrase, setNewPhrase] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -342,6 +344,13 @@ export default function Chat() {
             Icebreaker
           </button>
         )}
+        <button
+          onClick={() => setShowConsentProtocol(!showConsentProtocol)}
+          className="flex items-center text-xs font-medium bg-green-500/10 text-green-500 px-3 py-1.5 rounded-full border border-green-500/20 hover:bg-green-500/20 transition-colors"
+        >
+          <Shield className="w-4 h-4 mr-1" />
+          Consent
+        </button>
       </div>
 
       {/* Messages */}
@@ -575,6 +584,26 @@ export default function Chat() {
               <button onClick={handleAddPhrase} disabled={!newPhrase.trim()} className="px-4 py-2 bg-rose-600 text-white rounded-xl hover:bg-rose-700 transition-colors disabled:opacity-50">
                 Add
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Consent Protocol Modal */}
+      {showConsentProtocol && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 z-10 bg-zinc-900 border-b border-zinc-800 p-4 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-white">Consent Protocol</h2>
+              <button onClick={() => setShowConsentProtocol(false)} className="p-2 bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4">
+              <ConsentProtocol
+                targetUserId={chatId?.split('_')?.[1] || ''}
+                targetUserName={otherUser?.display_name || 'this person'}
+              />
             </div>
           </div>
         </div>

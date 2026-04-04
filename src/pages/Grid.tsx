@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { aiProvider } from '../lib/providers';
-import { Search, Zap, MapPin, Filter, MessageCircle, Map as MapIcon, Grid as GridIcon, X, Sparkles, Radio, Flame, ShieldCheck, Heart, ThumbsUp, Ban, AlertTriangle } from 'lucide-react';
+import { Search, Zap, MapPin, Filter, MessageCircle, Map as MapIcon, Grid as GridIcon, X, Sparkles, Radio, Flame, ShieldCheck, Heart, ThumbsUp, Ban, AlertTriangle, Target, Award, ChevronDown, ChevronUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Circle, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import 'leaflet.heat';
+import CompatibilityMatrix from '../components/CompatibilityMatrix';
+import SocialProofReferences from '../components/SocialProofReferences';
 
 // Fix leaflet icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -60,6 +62,25 @@ function HeatmapLayer({ points }: { points: [number, number, number][] }) {
   }, [map, points]);
 
   return null;
+}
+
+function CollapsibleSection({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border border-zinc-800 rounded-2xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between p-4 hover:bg-zinc-800/50 transition-colors"
+      >
+        <div className="flex items-center gap-2 font-semibold text-white">
+          {icon}
+          {title}
+        </div>
+        {open ? <ChevronUp className="w-5 h-5 text-zinc-400" /> : <ChevronDown className="w-5 h-5 text-zinc-400" />}
+      </button>
+      {open && <div className="px-4 pb-4">{children}</div>}
+    </div>
+  );
 }
 
 export default function Grid() {
@@ -519,6 +540,25 @@ Return JSON format: {"score": 85, "reason": "You both want to grab drinks right 
                   </div>
                 </div>
               )}
+
+              {/* Compatibility Matrix (Collapsible) */}
+              <CollapsibleSection
+                icon={<Target className="w-5 h-5 text-pink-500" />}
+                title="Compatibility Matrix"
+              >
+                <CompatibilityMatrix
+                  targetUserId={selectedProfile.user_id}
+                  targetUserName={selectedProfile.display_name}
+                />
+              </CollapsibleSection>
+
+              {/* Social Proof References (Collapsible) */}
+              <CollapsibleSection
+                icon={<Award className="w-5 h-5 text-yellow-500" />}
+                title="Social Proof"
+              >
+                <SocialProofReferences userId={selectedProfile.user_id} mode="view" />
+              </CollapsibleSection>
 
               <div className="flex space-x-2">
                 <button

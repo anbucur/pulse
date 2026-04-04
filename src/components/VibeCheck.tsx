@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, Mood, Target, MapPin, Battery, Send, Clock } from 'lucide-react';
+import { Zap, Smile, Target, MapPin, Battery, Send, Clock } from 'lucide-react';
 
 interface VibeData {
   user_id: string;
@@ -175,7 +175,7 @@ export default function VibeCheck() {
         {/* Current Mood */}
         <div className="mb-6">
           <h4 className="font-semibold mb-3 flex items-center gap-2">
-            <Mood className="w-4 h-4" />
+            <Smile className="w-4 h-4" />
             Current Mood
           </h4>
           <div className="grid grid-cols-3 gap-2">

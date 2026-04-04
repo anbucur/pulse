@@ -276,6 +276,12 @@ export default function Profile() {
               <Edit3 className="w-5 h-5" />
             </button>
             <button
+              onClick={() => navigate('/settings')}
+              className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+            <button
               onClick={logout}
               className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition"
             >
@@ -434,7 +440,7 @@ export default function Profile() {
                   type="text"
                   value={formData.height || ''}
                   onChange={(e) => setFormData({ ...formData, height: e.target.value })}
-                  placeholder="e.g., 5'10\""
+                  placeholder="e.g., 5&apos;10&quot;"
                   className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 focus:border-pink-500 outline-none"
                 />
               </div>
