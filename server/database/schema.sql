@@ -1047,3 +1047,192 @@ CREATE TABLE IF NOT EXISTS chemistry_predictions (
 CREATE INDEX IF NOT EXISTS idx_chemistry_user ON chemistry_predictions(user_id);
 CREATE INDEX IF NOT EXISTS idx_chemistry_target ON chemistry_predictions(target_user_id);
 CREATE INDEX IF NOT EXISTS idx_chemistry_overall ON chemistry_predictions(overall_compatibility);
+
+-- Safe Signal - Panic button and safety features
+CREATE TABLE IF NOT EXISTS safe_signals (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    -- Current active SOS alert
+    is_active BOOLEAN DEFAULT false,
+    activated_at TIMESTAMP,
+    deactivated_at TIMESTAMP,
+
+    -- Location data
+    latitude DECIMAL(10, 8),
+    longitude DECIMAL(11, 8),
+    location_accuracy DECIMAL(10, 2),
+    location_updated_at TIMESTAMP,
+
+    -- Recording status
+    is_recording BOOLEAN DEFAULT false,
+    recording_started_at TIMESTAMP,
+    recording_url TEXT,
+
+    -- Status updates
+    status_notes TEXT,
+    last_check_in TIMESTAMP,
+
+    -- Emergency contacts notified
+    emergency_contacts_notified UUID[],
+    notifications_sent_at TIMESTAMP,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_safe_signals_user ON safe_signals(user_id);
+CREATE INDEX IF NOT EXISTS idx_safe_signals_active ON safe_signals(is_active);
+CREATE INDEX IF NOT EXISTS idx_safe_signals_location ON safe_signals(latitude, longitude);
+
+-- Trusted Contacts (emergency contacts for Safe Signal)
+CREATE TABLE IF NOT EXISTS trusted_contacts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    contact_name VARCHAR(200) NOT NULL,
+    contact_phone VARCHAR(50),
+    contact_email VARCHAR(255),
+
+    relationship VARCHAR(100),
+    priority INTEGER DEFAULT 0,
+
+    notify_on_sos BOOLEAN DEFAULT true,
+    share_location BOOLEAN DEFAULT true,
+
+    is_verified BOOLEAN DEFAULT false,
+    verification_code VARCHAR(10),
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_trusted_contacts_user ON trusted_contacts(user_id);
+CREATE INDEX IF NOT EXISTS idx_trusted_contacts_priority ON trusted_contacts(priority);
+
+-- SOS Alerts (historical record of SOS activations)
+CREATE TABLE IF NOT EXISTS sos_alerts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    safe_signal_id UUID REFERENCES safe_signals(id) ON DELETE SET NULL,
+
+    -- Alert details
+    alert_type VARCHAR(50) DEFAULT 'panic',
+    severity VARCHAR(50) DEFAULT 'high',
+
+    -- Location at time of alert
+    latitude DECIMAL(10, 8),
+    longitude DECIMAL(11, 8),
+    location_address TEXT,
+
+    -- Context
+    was_on_date BOOLEAN DEFAULT false,
+    date_partner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    date_location TEXT,
+
+    -- Actions taken
+    fake_call_triggered BOOLEAN DEFAULT false,
+    fake_call_number VARCHAR(50),
+    location_shared BOOLEAN DEFAULT false,
+    recording_started BOOLEAN DEFAULT false,
+
+    -- Resolution
+    resolved_at TIMESTAMP,
+    resolution_notes TEXT,
+    follow_up_needed BOOLEAN DEFAULT false,
+
+    -- Notifications
+    contacts_notified UUID[],
+    emergency_services_contacted BOOLEAN DEFAULT false,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sos_alerts_user ON sos_alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_sos_alerts_created ON sos_alerts(created_at);
+CREATE INDEX IF NOT EXISTS idx_sos_alerts_severity ON sos_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_sos_alerts_date_partner ON sos_alerts(date_partner_id);
+
+CREATE TRIGGER update_safe_signals_updated_at BEFORE UPDATE ON safe_signals
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_trusted_contacts_updated_at BEFORE UPDATE ON trusted_contacts
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Fantasy Blueprint - Collaborative scenario builder
+CREATE TABLE IF NOT EXISTS fantasy_blueprints (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_by UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    -- Blueprint metadata
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+
+    -- Participants
+    participant_ids UUID[] NOT NULL,
+    status VARCHAR(50) DEFAULT 'draft',
+
+    -- Content (structured fantasy/scenario)
+    scenario_type VARCHAR(100),
+    mood VARCHAR(100)[],
+    pace VARCHAR(50),
+
+    -- Shared document content
+    content JSONB,
+
+    -- Collaboration settings
+    allow_edits BOOLEAN DEFAULT true,
+    require_approval BOOLEAN DEFAULT false,
+    is_visible_to_all BOOLEAN DEFAULT true,
+
+    -- Scheduling (if leading to a meetup)
+    scheduled_for TIMESTAMP,
+    location_preference TEXT,
+
+    -- Privacy
+    is_private BOOLEAN DEFAULT false,
+    passcode VARCHAR(50),
+
+    -- Completion tracking
+    everyone_agreed BOOLEAN DEFAULT false,
+    agreements UUID[],
+
+    -- Soft delete
+    deleted_at TIMESTAMP,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fantasy_blueprints_created_by ON fantasy_blueprints(created_by);
+CREATE INDEX IF NOT EXISTS idx_fantasy_blueprints_participants ON fantasy_blueprints USING GIN (participant_ids);
+CREATE INDEX IF NOT EXISTS idx_fantasy_blueprints_status ON fantasy_blueprints(status);
+CREATE INDEX IF NOT EXISTS idx_fantasy_blueprints_scheduled ON fantasy_blueprints(scheduled_for);
+
+-- Blueprint Contributions (edit history for collaborative fantasy building)
+CREATE TABLE IF NOT EXISTS blueprint_contributions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    blueprint_id UUID REFERENCES fantasy_blueprints(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+
+    -- Change tracking
+    action VARCHAR(50) NOT NULL,
+    section_affected VARCHAR(100),
+
+    -- Content changes (diff)
+    previous_value JSONB,
+    new_value JSONB,
+
+    -- Metadata
+    change_description TEXT,
+    is_approved BOOLEAN DEFAULT true,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_blueprint_contributions_blueprint ON blueprint_contributions(blueprint_id);
+CREATE INDEX IF NOT EXISTS idx_blueprint_contributions_user ON blueprint_contributions(user_id);
+CREATE INDEX IF NOT EXISTS idx_blueprint_contributions_created ON blueprint_contributions(created_at);
+
+CREATE TRIGGER update_fantasy_blueprints_updated_at BEFORE UPDATE ON fantasy_blueprints
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
