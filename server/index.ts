@@ -38,6 +38,8 @@ import convoStartersRoutes from './routes/convo-starters.js';
 import ghostingRoutes from './routes/ghosting.js';
 import vouchRoutes from './routes/vouch.js';
 import completionRoutes from './routes/completion.js';
+import verificationRoutes from './routes/verification.js';
+import locationSharingRoutes from './routes/location-sharing.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -126,6 +128,8 @@ app.use('/api/convo-starters', convoStartersRoutes);
 app.use('/api/ghosting', ghostingRoutes);
 app.use('/api/vouch', vouchRoutes);
 app.use('/api/completion', completionRoutes);
+app.use('/api/verification', verificationRoutes);
+app.use('/api/location-sharing', locationSharingRoutes);
 
   // Create HTTP server
   const server = createServer(app);
