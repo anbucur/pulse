@@ -42,6 +42,8 @@ import verificationRoutes from './routes/verification.js';
 import locationSharingRoutes from './routes/location-sharing.js';
 import eventDiscoveryRoutes from './routes/event-discovery.js';
 import speedDatingRoutes from './routes/speed-dating.js';
+import musicRoutes from './routes/music.js';
+import datePlannerRoutes from './routes/date-planner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
@@ -134,6 +136,8 @@ app.use('/api/verification', verificationRoutes);
 app.use('/api/location-sharing', locationSharingRoutes);
 app.use('/api/event-discovery', eventDiscoveryRoutes);
 app.use('/api/speed-dating', speedDatingRoutes);
+app.use('/api/music', musicRoutes);
+app.use('/api/date-planner', datePlannerRoutes);
 
   // Create HTTP server
   const server = createServer(app);
